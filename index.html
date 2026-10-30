@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Glamify XR | The future of luxury, reflected</title>
+  <meta name="description" content="Glamify XR is a smart mirror for luxury retail: virtual try-ons for makeup, fashion and fine jewelry.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Italiana&family=Pinyon+Script&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <video id="heroBg" src="/videos/hero-earring.mp4" muted loop playsinline preload="auto"></video>
+  <div class="heroShade"></div>
+  <canvas id="gl"></canvas>
+  <div class="vignette"></div>
+  <header><a class="logo" href="#" id="top" aria-label="Plinkmind, Glamify XR"><img src="/pm-logo.png" alt="Plinkmind"><span class="prod">Glamify XR</span></a><div class="hactions"><button class="demo" type="button" data-tryon>Try It On</button><a class="demo" href="#" id="toEnd">Request a demo</a></div></header>
+  <div id="chs"></div>
+  <nav id="dots" aria-label="Chapters"></nav>
+  <div id="hint">Scroll<i></i></div>
+  <div id="loader">
+    <div class="shards" id="shards"></div>
+    <div class="l-content" id="lcontent">
+      <div class="l-logo">
+        <svg class="l-ring" viewBox="0 0 120 200" aria-hidden="true"><ellipse class="track" cx="60" cy="100" rx="54" ry="94"/><ellipse id="ring" cx="60" cy="100" rx="54" ry="94" pathLength="1"/></svg>
+        <img src="/pm-mark.png" alt="Plinkmind logo">
+      </div>
+      <div class="l-name">Plinkmind</div>
+      <p class="l-sub">presents &middot; Glamify XR</p>
+      <p id="pct">0%</p>
+      <button id="enter" hidden>Enter</button>
+    </div>
+  </div>
+  <div id="spacer"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
