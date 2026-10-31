@@ -36,9 +36,9 @@ body.studio-open{overflow:hidden}
 .ts-edit{border:1px solid rgba(226,190,124,.4);border-radius:18px;padding:16px;background:rgba(255,255,255,.04);display:grid;gap:12px}
 .ts-et{font-family:Italiana,Georgia,serif;font-size:24px}
 .ts-sw{display:flex;flex-wrap:wrap;gap:10px}
-.sw{width:32px;height:32px;border-radius:50%;border:2px solid #0B0E14;box-shadow:0 0 0 1px rgba(255,255,255,.35);cursor:pointer;padding:0;transition:transform .2s}
-.sw:hover{transform:scale(1.12)}
-.sw.on{box-shadow:0 0 0 2px #E2BE7C}
+.ts .sw{width:32px;height:32px;border-radius:50%;border:2px solid #0B0E14;box-shadow:0 0 0 1px rgba(255,255,255,.35);cursor:pointer;padding:0;transition:transform .2s}
+.ts .sw:hover{transform:scale(1.12)}
+.ts .sw.on{box-shadow:0 0 0 2px #E2BE7C}
 .ts-sn{font-size:13px;color:#D3CABD;margin-top:-4px}
 .ts-rng{display:grid;gap:6px;font-size:13px;color:#D3CABD}
 .ts-rng input{accent-color:#E2BE7C;width:100%}
@@ -104,7 +104,7 @@ body.studio-open{overflow:hidden}
 }
 /* touch screens: bigger targets */
 @media (pointer:coarse){
-  .sw{width:40px;height:40px}
+  .ts .sw{width:40px;height:40px}
   .ts-sw{gap:12px}
   .ts-rng input{height:32px}
   .ts-split{height:32px}

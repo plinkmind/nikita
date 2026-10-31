@@ -76,7 +76,7 @@ h1,h2{font-family:Italiana,"Didot",Georgia,serif;font-weight:400;line-height:1.0
 #dots button:focus-visible{outline-offset:6px}
 
 /* the finale swatches: the try-on studio has its own .sw, keep the two apart */
-.ch .sw{flex-wrap:wrap}
+.ch .sw{flex-wrap:wrap;width:auto;height:auto;border:0;border-radius:0;box-shadow:none;padding:0}
 .sw button{min-width:38px}
 
 /* ---------- tablets and phones held upright (single-column layout) ----------
