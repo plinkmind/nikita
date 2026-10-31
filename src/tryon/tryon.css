@@ -145,3 +145,14 @@ body.studio-open{overflow:hidden}
 .ts-shot button{justify-self:start;min-height:44px;padding:8px 18px;border-radius:999px;border:1px solid rgba(226,190,124,.6);background:transparent;color:#F7F1E8;cursor:pointer}
 @media (max-width:380px){.lk-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ts-tabs button{font-size:12px}}
 .ts-panel>*{flex-shrink:0} /* sections keep their height and the panel scrolls, instead of squeezing and overlapping */
+
+/* tabs scroll sideways on narrow screens instead of squeezing 7 labels together */
+.ts-tabs{display:flex;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.ts-tabs::-webkit-scrollbar{display:none}
+.ts-tabs button{flex:0 0 auto;padding:11px 16px;white-space:nowrap}
+.ts-opt{display:grid;gap:6px;margin-top:8px}
+.ts-opt>span{font-size:12px;color:#D3CABD;letter-spacing:.08em;text-transform:uppercase}
+.ts-up{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 18px;margin-top:8px;border-radius:999px;border:1px dashed rgba(226,190,124,.8);color:#E2BE7C;cursor:pointer;position:relative;overflow:hidden}
+.ts-up input{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:0}
+.ts-up:focus-within{outline:2px solid #E2BE7C;outline-offset:3px}
+.ts-note{margin:6px 0 0;font-size:12px;color:#D3CABD;line-height:1.5}

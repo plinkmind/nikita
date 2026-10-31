@@ -1,10 +1,13 @@
 // Virtual Try-On Studio: overlay UI, render loop, product panel, capture.
 import './tryon.css'
 import { Camera, describeError } from './camera.js'
-import { createTracker, createPoseTracker, Face } from './face.js'
+import { createTracker, createPoseTracker, createHandTracker, createSegmenter, smoothPts, Face } from './face.js'
 import { drawMakeup } from './makeup.js'
 import { JEWELLERY, drawJewellery } from './jewellery.js'
-import { ALL_PRODUCTS as ALL, groupsOf, findProduct, categoryOf, iconOf } from './catalog.js'
+import { drawHairStyle, drawBangs, drawHairColour, buildHairMask, FACE_OVAL, HAIR_STYLE_IDS } from './hair.js'
+import { drawNails } from './nails.js'
+import { drawOutfit, bodyFrom, prepGarment, OUTFIT_IDS } from './outfit.js'
+import { ALL_PRODUCTS as ALL, groupsOf, findProduct, categoryOf, iconOf, needOf } from './catalog.js'
 import { getLooks, saveLook, deleteLook, getFavs, isFav, toggleFav } from './looks.js'
 
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
@@ -24,7 +27,7 @@ const TEMPLATE = `
     </div>
   </section>
   <aside class="ts-panel">
-    <div class="ts-tabs"><button data-tab="makeup" class="on">Makeup</button><button data-tab="jewellery">Jewellery</button><button data-tab="saved">Saved</button><button data-tab="compare">Compare</button></div>
+    <div class="ts-tabs"><button data-tab="makeup" class="on">Makeup</button><button data-tab="hair">Hair</button><button data-tab="outfits">Outfits</button><button data-tab="nails">Nails</button><button data-tab="jewellery">Jewellery</button><button data-tab="saved">Saved</button><button data-tab="compare">Compare</button></div>
     <div class="ts-list"></div>
     <div class="ts-edit" hidden></div>
     <div class="ts-looks" hidden></div>
@@ -51,24 +54,45 @@ export function initStudio(hooks = {}) {
   // keep drawing the last known face for a moment if tracking drops for a frame or two (stops jewellery flickering away)
   const HOLD_MS = 300
   let lastM = null, lastSeen = 0
-  // shoulders (for necklaces) come from the pose model, which is only downloaded when a necklace is applied
-  let poseT = null, poseTried = false, lastPose = 0, shoulders = null
-  const needNeck = () => !!(state.necklace || state.chain || state.pendant)
-  const lerpP = (a, b) => ({ x: a.x + (b.x - a.x) * 0.4, y: a.y + (b.y - a.y) * 0.4 })
-  async function loadPose() { if (poseT || poseTried) return; poseTried = true; try { poseT = await createPoseTracker() } catch { /* necklaces fall back to a face-based estimate */ } }
-  function updateShoulders(now, w, h) {
-    loadPose()
-    if (!poseT || now - lastPose < 100) return
-    lastPose = now
-    const p = poseT.detectForVideo(vid, now).landmarks[0]
-    if (p && p[11].visibility > 0.5 && p[12].visibility > 0.5) {
-      const X = (v) => (cam.mirror ? 1 - v : v) * w
-      let a = { x: X(p[11].x), y: p[11].y * h }, b = { x: X(p[12].x), y: p[12].y * h }
-      if (a.x > b.x) [a, b] = [b, a]
-      shoulders = shoulders ? { l: lerpP(shoulders.l, a), r: lerpP(shoulders.r, b) } : { l: a, r: b }
-    } else shoulders = null
+  // Extra models (body pose, hands, hair segmentation) are downloaded only when a product that needs them is applied.
+  const EXTRA = { pose: { make: createPoseTracker, name: 'Body' }, hand: { make: createHandTracker, name: 'Hand' }, seg: { make: createSegmenter, name: 'Hair' } }
+  const models = {}
+  function ensure(k) {
+    const m = (models[k] ||= { t: null, busy: false, last: 0, failedAt: 0 })
+    if (m.t || m.busy || (m.failedAt && performance.now() - m.failedAt < 8000)) return m
+    m.busy = true; say(`Loading ${EXTRA[k].name.toLowerCase()} tracking...`)
+    EXTRA[k].make().then((t) => { m.t = t; say('') }).catch(() => { m.failedAt = performance.now(); say(`${EXTRA[k].name} tracking could not load. Check your internet connection.`); setTimeout(() => say(''), 3500) }).finally(() => { m.busy = false })
+    return m
   }
-
+  const needs = () => { const n = new Set(); Object.keys(state).forEach((id) => { const p = findProduct(id); if (p) needOf(p).split('+').forEach((k) => n.add(k)) }); return n }
+  let pose = null, poseSeen = 0, hands = [], handsSeen = 0, handSlots = {}, customImg = null, customNote = 'Your photo stays on this device. It is not uploaded.'
+  const hairMask = document.createElement('canvas'), hairTint = document.createElement('canvas')
+  function updatePose(now, w, h) {
+    const m = models.pose; if (!m?.t || now - m.last < 100) return
+    m.last = now
+    const p = m.t.detectForVideo(vid, now).landmarks[0]
+    if (p) {
+      const pts = p.map((q) => ({ x: (cam.mirror ? 1 - q.x : q.x) * w, y: q.y * h, v: q.visibility ?? 0 }))
+      pose = smoothPts(pose, pts, Math.hypot(pts[11].x - pts[12].x, pts[11].y - pts[12].y) || 100); poseSeen = now
+    } else if (now - poseSeen > HOLD_MS) pose = null
+  }
+  function updateHands(now) {
+    const m = models.hand; if (!m?.t || now - m.last < DETECT_MS) return
+    m.last = now
+    const r = m.t.detectForVideo(raw, now), list = []
+    r.landmarks.forEach((lm, i) => {
+      const label = r.handedness[i]?.[0]?.categoryName || 'Right'
+      let P = lm.map((q) => ({ x: q.x * raw.width, y: q.y * raw.height }))
+      P = handSlots[label] = smoothPts(handSlots[label], P, Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y) || 100)
+      const cz = (P[5].x - P[0].x) * (P[17].y - P[0].y) - (P[5].y - P[0].y) * (P[17].x - P[0].x) // which way the palm faces
+      const right = (label === 'Right') === cam.mirror // the hand model assumes a mirrored (selfie) image
+      list.push({ P, back: right ? cz < 0 : cz > 0 })
+    })
+    if (list.length) { hands = list; handsSeen = now } else if (now - handsSeen > HOLD_MS) { hands = []; handSlots = {} }
+  }
+  function restoreFace(M) { // put the real face back on top of hair or clothes that were drawn over it
+    fctx.save(); fctx.beginPath(); FACE_OVAL.forEach((i, k) => (k ? fctx.lineTo(M.P[i].x, M.P[i].y) : fctx.moveTo(M.P[i].x, M.P[i].y))); fctx.closePath(); fctx.clip(); fctx.drawImage(raw, 0, 0); fctx.restore()
+  }
   const say = (t) => { msg.textContent = t || ''; msg.hidden = !t }
   const btn = (a) => $(`[data-a="${a}"]`)
 
@@ -85,7 +109,7 @@ export function initStudio(hooks = {}) {
     catch (e) { say(describeError(e)); if (!cam.active) stopLoop(); return }
     running = true; say(''); sync(); loadTracker(); cancelAnimationFrame(raf); loop()
   }
-  function stopLoop() { running = false; cancelAnimationFrame(raf); face.reset(); lastLm = null; lastM = null; shoulders = null; hint.hidden = true; sync() }
+  function stopLoop() { running = false; cancelAnimationFrame(raf); face.reset(); lastLm = null; lastM = null; pose = null; hands = []; handSlots = {}; hint.hidden = true; sync() }
   function stop() {
     cam.stop(); stopLoop(); octx.clearRect(0, 0, out.width, out.height)
     say('Camera is off. Press Start Camera to continue.')
@@ -106,19 +130,42 @@ export function initStudio(hooks = {}) {
     }
     rctx.save(); if (cam.mirror) { rctx.translate(w, 0); rctx.scale(-1, 1) } rctx.drawImage(vid, 0, 0, w, h); rctx.restore()
     fctx.drawImage(raw, 0, 0)
-    let found = false
-    if (tracker) {
-      const now = performance.now()
-      if (now - lastDetect >= DETECT_MS) { lastDetect = now; lastLm = tracker.detectForVideo(vid, now).faceLandmarks[0] || null }
-      const lm = lastLm
-      if (lm) { lastM = face.update(lm, w, h, cam.mirror); lastSeen = now }
-      if (lastM && (lm || now - lastSeen < HOLD_MS)) {
-        if (needNeck()) updateShoulders(now, w, h)
-        lastM.shoulders = needNeck() ? shoulders : null
-        drawMakeup(fctx, lastM, state, raw); drawJewellery(fctx, lastM, state, now / 1000); found = !!lm
-      } else { face.reset(); lastM = null }
+    const now = performance.now(), need = needs(), t = now / 1000
+    ;['pose', 'hand', 'seg'].forEach((k) => need.has(k) && ensure(k))
+    // 1. hair colour (recolours the real hair using the segmentation mask, refreshed about 8-10 times a second)
+    if (need.has('seg') && models.seg?.t && now - models.seg.last > (phone ? 130 : 90)) {
+      models.seg.last = now
+      try { models.seg.t.segmentForVideo(raw, now, (r) => { const mk = r.categoryMask; if (mk) buildHairMask(mk.getAsUint8Array(), mk.width, mk.height, hairMask) }) } catch { /* try again next time */ }
     }
-    hint.hidden = !tracker || found
+    if (need.has('seg')) drawHairColour(fctx, hairMask, hairTint, state, w, h)
+    // 2. face
+    let M = null
+    if (tracker && need.has('face')) {
+      if (now - lastDetect >= DETECT_MS) { lastDetect = now; lastLm = tracker.detectForVideo(vid, now).faceLandmarks[0] || null }
+      if (lastLm) { lastM = face.update(lastLm, w, h, cam.mirror); lastSeen = now }
+      if (lastM && (lastLm || now - lastSeen < HOLD_MS)) M = lastM; else { face.reset(); lastM = null }
+    }
+    // 3. body
+    if (need.has('pose')) updatePose(now, w, h)
+    const B = need.has('pose') ? bodyFrom(pose) : null
+    // 4. draw, back to front: outfit, hairstyle, the real face, bangs, makeup, jewellery, nails
+    const outfitOn = Object.keys(state).some((id) => OUTFIT_IDS.has(id)), styleOn = HAIR_STYLE_IDS.some((id) => state[id])
+    if (outfitOn && B) drawOutfit(fctx, B, state, customImg, t)
+    if (M) {
+      if (styleOn) drawHairStyle(fctx, M, state, t)
+      if ((styleOn || (outfitOn && B)) ) restoreFace(M)
+      drawBangs(fctx, M, state)
+      drawMakeup(fctx, M, state, raw)
+      M.shoulders = B ? { l: B.l, r: B.r } : null
+      drawJewellery(fctx, M, state, t)
+    }
+    if (need.has('hand')) { updateHands(now); drawNails(fctx, hands, state, t) }
+    // 5. guidance
+    const hm = need.has('face') && tracker && !M ? 'Looking for your face... move into the frame'
+      : need.has('pose') && models.pose?.t && !B ? 'Step back a little so your shoulders are in the frame'
+      : need.has('hand') && models.hand?.t && !hands.length ? 'Show your hand to the camera, back of the hand facing you' : ''
+    if (hint.textContent !== hm) hint.textContent = hm
+    hint.hidden = !hm
     octx.drawImage(fin, 0, 0)
     if (compare) {
       const x = (w * split.value) / 100
@@ -149,6 +196,13 @@ export function initStudio(hooks = {}) {
   }
 
   /* ---- product panel ---- */
+  // applying a product replaces any other one of the same kind (one hairstyle, one nail design, one base garment...)
+  function addProduct(id) {
+    const p = findProduct(id); if (!p || state[id]) return
+    if (p.excl) Object.keys(state).forEach((k) => { if (findProduct(k)?.excl === p.excl) delete state[k] })
+    state[id] = { shade: 0, v: p.v, ...(p.defaults || {}) }
+    ;(p.ranges || []).forEach((r) => { state[id][r.k] = r.def })
+  }
   const lookTab = () => tab === 'saved' || tab === 'compare'
   const appliedHtml = () => { const ids = Object.keys(state); return ids.length ? '<span>Applied</span>' + ids.map((id) => `<button class="tag" data-rm="${id}">${esc(findProduct(id).label)} &times;</button>`).join('') : '' }
   const chip = (p) => `<button class="chip${state[p.id] ? ' on' : ''}${sel === p.id ? ' sel' : ''}" data-p="${p.id}">${iconOf(p)}${isFav(p.id) ? '&#9733; ' : ''}${esc(p.label)}</button>`
@@ -162,12 +216,15 @@ export function initStudio(hooks = {}) {
     const ed = $('.ts-edit'), p = sel && findProduct(sel), st = sel && state[sel]
     if (!p || !st || categoryOf(sel) !== tab) ed.hidden = true
     else {
-      const jew = categoryOf(sel) === 'jewellery'
+      const cat = categoryOf(sel), sizeLabel = cat === 'nails' ? 'Colour strength' : cat === 'outfits' || cat === 'jewellery' ? 'Size' : 'Intensity'
       ed.hidden = false
       ed.innerHTML = `<div class="ts-et">${esc(p.label)}</div>
         <div class="ts-sw">${p.shades.map((s, i) => `<button class="sw${i === st.shade ? ' on' : ''}" data-s="${i}" style="background:${s.c}" title="${esc(s.n)}" aria-label="${esc(s.n)}"></button>`).join('')}</div>
         <div class="ts-sn">${esc(p.shades[st.shade].n)}</div>
-        <label class="ts-rng">${jew ? 'Size' : 'Intensity'}<input type="range" min="0" max="1" step="0.01" value="${st.v}"></label>
+        ${p.noSize ? '' : `<label class="ts-rng">${sizeLabel}<input type="range" min="0" max="1" step="0.01" value="${st.v}"></label>`}
+        ${(p.ranges || []).map((r) => `<label class="ts-rng">${esc(r.label)}<input type="range" min="${r.min}" max="${r.max}" step="0.01" value="${st[r.k] ?? r.def}" data-k="${r.k}"></label>`).join('')}
+        ${(p.opts || []).map((o) => `<div class="ts-opt"><span>${esc(o.label)}</span><div class="ts-chips">${o.values.map(([v, l]) => `<button class="chip${st[o.k] === v ? ' on' : ''}" data-opt="${o.k}:${v}">${esc(l)}</button>`).join('')}</div></div>`).join('')}
+        ${p.upload ? `<label class="ts-up">Choose a clothing photo<input type="file" accept="image/png,image/jpeg,image/webp" data-up></label><p class="ts-note">${esc(customNote)}</p>` : ''}
         <div class="ts-row"><button class="ts-fav" data-fav="${p.id}">${isFav(p.id) ? '&#9733; Favourite' : '&#9734; Add to favourites'}</button><button class="ts-rm" data-rm="${p.id}">Remove ${esc(p.label)}</button></div>`
     }
   }
@@ -206,7 +263,7 @@ export function initStudio(hooks = {}) {
   function openLook(id) {
     const l = getLooks().find((x) => x.id === id); if (!l) return
     Object.keys(state).forEach((k) => delete state[k])
-    Object.entries(l.state).forEach(([k, v]) => { if (findProduct(k)) state[k] = v })
+    Object.entries(l.state).forEach(([k, v]) => { if (findProduct(k) && !(k === 'o-custom' && !customImg)) state[k] = v })
     sel = null; tab = 'makeup'; root.querySelectorAll('.ts-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab)); renderList()
     $('.ts-view').scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }
@@ -214,8 +271,9 @@ export function initStudio(hooks = {}) {
   root.addEventListener('click', (e) => {
     const t = e.target.closest('button'); if (!t) return
     if (t.dataset.tab) { tab = t.dataset.tab; root.querySelectorAll('.ts-tabs button').forEach((b) => b.classList.toggle('on', b === t)); renderList() }
-    else if (t.dataset.p) { const id = t.dataset.p; if (!state[id]) state[id] = { shade: 0, v: findProduct(id).v }; sel = id; renderList() }
-    else if (t.dataset.fp) { const id = t.dataset.fp; if (!state[id]) state[id] = { shade: 0, v: findProduct(id).v }; sel = id; tab = categoryOf(id); root.querySelectorAll('.ts-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab)); renderList() }
+    else if (t.dataset.p) { addProduct(t.dataset.p); sel = t.dataset.p; renderList() }
+    else if (t.dataset.fp) { const id = t.dataset.fp; addProduct(id); sel = id; tab = categoryOf(id); root.querySelectorAll('.ts-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab)); renderList() }
+    else if (t.dataset.opt) { const [k, v] = t.dataset.opt.split(':'); if (state[sel]) state[sel][k] = v; renderList() }
     else if (t.dataset.s) { state[sel].shade = +t.dataset.s; renderList() }
     else if (t.dataset.fav) { toggleFav(t.dataset.fav); renderList() }
     else if (t.dataset.rm) { delete state[t.dataset.rm]; if (sel === t.dataset.rm) sel = null; renderList() }
@@ -223,8 +281,16 @@ export function initStudio(hooks = {}) {
     else if (t.dataset.lkDel) { deleteLook(t.dataset.lkDel); renderList() }
     else if (t.dataset.a) action(t.dataset.a)
   })
+  root.addEventListener('change', async (e) => {
+    const f = e.target.closest('[data-up]'); if (!f || !f.files[0]) return
+    const file = f.files[0]
+    if (!/^image\/(png|jpe?g|webp)$/.test(file.type) || file.size > 8e6) { customNote = 'Please choose a PNG, JPG or WebP image under 8 MB.'; renderList(); return }
+    try { const r = prepGarment(await createImageBitmap(file)); customImg = r.canvas; customNote = r.cleaned ? 'Plain background removed. If the edges look rough, use a photo on a plain background.' : 'Photo added. A garment on a plain background works best.' }
+    catch { customNote = 'That image could not be read. Try another one.' }
+    renderList()
+  })
   root.addEventListener('change', (e) => { const s = e.target.closest('[data-cmp]'); if (s) { if (s.dataset.cmp === 'A') cmpA = +s.value; else cmpB = +s.value; renderLooks() } })
-  root.addEventListener('input', (e) => { if (e.target.matches('.ts-rng input') && state[sel]) state[sel].v = +e.target.value })
+  root.addEventListener('input', (e) => { if (e.target.matches('.ts-rng input') && state[sel]) state[sel][e.target.dataset.k || 'v'] = +e.target.value })
 
   async function action(a) {
     if (a === 'close') close()

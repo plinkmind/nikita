@@ -4,9 +4,20 @@
 // All current entries are DEMONSTRATION entries: no real brands, prices or stock.
 import { MAKEUP } from './makeup.js'
 import { JEWELLERY } from './jewellery.js'
+import { HAIR } from './hair.js'
+import { NAILS } from './nails.js'
+import { OUTFITS } from './outfit.js'
 
+// which tracking model each product needs: face, pose (body), hand or seg (hair segmentation). The studio loads a model only when needed.
+export const needOf = (p) => p.need || (['necklace', 'chain', 'pendant'].includes(p.id) ? 'face+pose' : 'face')
 export const CATEGORIES = {
   makeup: { label: 'Makeup', products: MAKEUP, groups: [{ name: 'Makeup products', ids: MAKEUP.map((p) => p.id) }] },
+  hair: { label: 'Hair', products: HAIR, groups: [{ name: 'Hairstyles', ids: ['h-short', 'h-bob', 'h-long', 'h-layers', 'h-wavy', 'h-curly', 'h-bangs'] }, { name: 'Hair colours', ids: ['haircolor'] }] },
+  outfits: {
+    label: 'Outfits', products: OUTFITS,
+    groups: [{ name: 'Tops', ids: ['o-tee', 'o-shirt', 'o-top'] }, { name: 'Dresses & kurtis', ids: ['o-dress', 'o-kurti', 'o-party'] }, { name: 'Jackets & blazers', ids: ['o-jacket', 'o-blazer'] }, { name: 'Your own clothing', ids: ['o-custom'] }],
+  },
+  nails: { label: 'Nails', products: NAILS, groups: [{ name: 'Nail polish', ids: ['np-nude', 'np-pink', 'np-red', 'np-dark'] }, { name: 'Designs', ids: ['np-french', 'np-glitter', 'np-ombre', 'np-chrome'] }] },
   jewellery: {
     label: 'Jewellery', products: JEWELLERY,
     groups: [

@@ -142,4 +142,27 @@ Your original ZIP (`glamify-xr (4).zip`) was not changed. Keep it as your backup
 
 **Not tested (needs a real person, camera and internet):** real face and shoulder tracking accuracy, the Pose model download (`pose_landmarker_lite` from Google storage; if it fails, necklaces silently use the face-based estimate), iPhone/iPad Safari, Android Chrome.
 
-**Not built yet (be aware, there are no placeholder buttons for these):** Nail try-on, hairstyles and hair colours, dress/outfit try-on, Shop & Try On (Amazon / Meesho / Myntra), AI style assistant, uploaded-photo try-on, backend/accounts.
+**Not built yet:** Shop & Try On (Amazon / Meesho / Myntra), AI style assistant, try-on on an uploaded photo of yourself, backend/accounts. There are no placeholder buttons for these.
+
+---
+
+## H. Update 3: nails, hair and outfits
+
+All three are in the Try-On Studio as tabs (Hair, Outfits, Nails). Each downloads its tracking model **only when you apply a product that needs it**, never on the home page. Applying a second product of the same kind replaces the first (one hairstyle, one nail design, one base garment, one jacket).
+
+**Nails** (hand model)
+- Polish colours (nude, pink, red, black/dark), French manicure, glitter, ombre, chrome.
+- Shapes: square, round, almond, coffin, stiletto. Finish: glossy or matte. Colour strength slider. Works on both hands.
+- Each nail follows its finger (direction, length, thickness). Polish is drawn on the **back of the hand** only; there is a "Show nails: Always" option because the palm/back detection has not been tested on real hands.
+
+**Hair**
+- *Hairstyles:* short, bob, long straight, layered, long wavy, curly, plus bangs, in 8 colours. These are **stylised 2D illustrations** anchored to your head (position, size, tilt, turn). They are NOT realistic hair replacement, and your own hair stays visible wherever the new style does not cover it. They look best if your hair is short or pulled back.
+- *Hair colours:* recolours your **real hair** using a hair-segmentation model (11 colours, intensity slider). Light and shadow of your own hair are kept.
+
+**Outfits**
+- T-shirt, shirt, top, dress, kurti, party dress, jacket, blazer, in 8 colours, fitted to your shoulders, torso and arms from the body model. If your hips are out of the camera frame the length is estimated.
+- **My clothing photo:** choose a photo of a garment (plain background works best). A plain background is removed automatically and the garment is placed on your shoulders. The photo stays on your device.
+- This is a **basic garment overlay**, not cloth simulation and not an AI-generated realistic try-on. Your hands and arms are not drawn in front of the garment. The structure is modular, so a realistic try-on model can be added later.
+
+**Tested:** the studio running in a real browser with a fake camera and *simulated* tracking data (all three features applied together, saved as a look, at 8 screen sizes, no errors), plus drawing checks on synthetic head, body and hand shapes.
+**Not tested:** the real hand, body and hair-segmentation models (they need internet and a real person), real-hand palm/back detection, and any iPhone/iPad/Android hardware. The model files are loaded from Google's public MediaPipe storage; if they fail to load the studio shows a message and everything else keeps working.

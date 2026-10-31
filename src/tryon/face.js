@@ -46,11 +46,24 @@ export class Face {
   }
 }
 
-// Body pose (shoulders), used to place necklaces. Loaded only when a necklace is applied.
-const POSE = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
-export async function createPoseTracker() {
-  const { PoseLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision')
-  const files = await FilesetResolver.forVisionTasks(WASM)
-  const make = (delegate) => PoseLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: POSE, delegate }, runningMode: 'VIDEO', numPoses: 1 })
-  try { return await make('GPU') } catch { return await make('CPU') }
+// Extra models. Each one is downloaded only when a product that needs it is applied (never on the home page).
+const MODELS = 'https://storage.googleapis.com/mediapipe-models/'
+const POSE = MODELS + 'pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
+const HAND = MODELS + 'hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+const SEG = MODELS + 'image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite' // 1 = hair
+let visionP
+const vision = () => visionP || (visionP = import('@mediapipe/tasks-vision').then(async (m) => ({ m, files: await m.FilesetResolver.forVisionTasks(WASM) })))
+async function make(name, opts, modelAssetPath) {
+  const { m, files } = await vision()
+  const mk = (delegate) => m[name].createFromOptions(files, { ...opts, baseOptions: { modelAssetPath, delegate } })
+  try { return await mk('GPU') } catch { return await mk('CPU') }
+}
+export const createPoseTracker = () => make('PoseLandmarker', { runningMode: 'VIDEO', numPoses: 1 }, POSE)
+export const createHandTracker = () => make('HandLandmarker', { runningMode: 'VIDEO', numHands: 2 }, HAND)
+export const createSegmenter = () => make('ImageSegmenter', { runningMode: 'VIDEO', outputCategoryMask: true, outputConfidenceMasks: false }, SEG)
+
+// shared by the hand and body trackers: speed-adaptive smoothing (steady when still, quick when moving)
+export function smoothPts(prev, next, ref) {
+  if (!prev || prev.length !== next.length) return next.map((p) => ({ ...p }))
+  return next.map((p, i) => { const a = Math.min(0.9, 0.3 + (Math.hypot(p.x - prev[i].x, p.y - prev[i].y) / ref) * 9); return { ...p, x: prev[i].x + (p.x - prev[i].x) * a, y: prev[i].y + (p.y - prev[i].y) * a } })
 }
