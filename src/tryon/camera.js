@@ -3,14 +3,23 @@ export class Camera {
   constructor(video) { this.video = video; this.stream = null; this.deviceId = null; this.mirror = true }
 
   async start(deviceId) {
+    if (this.starting) return // ignore double taps: never open two streams
+    this.starting = true
+    try { await this._start(deviceId) } finally { this.starting = false }
+  }
+
+  async _start(deviceId) {
     this.stop()
     if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error('unsupported'), { name: 'NotSupportedError' })
-    const v = { width: { ideal: 1280 }, height: { ideal: 720 } }
+    // phones get a lighter stream (easier on the face tracker); desktops keep 720p
+    const phone = Math.min(screen.width, screen.height) < 700 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    const v = phone ? { width: { ideal: 960 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } } : { width: { ideal: 1280 }, height: { ideal: 720 } }
     if (deviceId) v.deviceId = { exact: deviceId }; else v.facingMode = 'user'
     this.stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false })
     const s = this.stream.getVideoTracks()[0].getSettings()
     this.deviceId = s.deviceId || null
     this.mirror = s.facingMode !== 'environment' // selfie cameras are shown mirrored
+    this.video.muted = true; this.video.setAttribute('playsinline', '')
     this.video.srcObject = this.stream
     await this.video.play()
   }

@@ -32,7 +32,7 @@ const TEMPLATE = `
   </aside>
 </div>`
 
-export function initStudio() {
+export function initStudio(hooks = {}) {
   const root = document.createElement('div')
   root.className = 'ts'; root.hidden = true; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'Virtual Try-On Studio')
   root.innerHTML = TEMPLATE; document.body.appendChild(root)
@@ -42,7 +42,10 @@ export function initStudio() {
   const rctx = raw.getContext('2d'), fctx = fin.getContext('2d')
   const cam = new Camera(vid), face = new Face()
   const state = {}
+  const phone = matchMedia('(pointer:coarse)').matches || Math.min(screen.width, screen.height) < 700
+  const DETECT_MS = phone ? 45 : 0 // phones: run the face model about 22x/second instead of every frame
   let tracker = null, trackerTried = false, raf = 0, running = false, tab = 'makeup', sel = null, compare = false
+  let lastDetect = 0, lastLm = null, lastOpener = null
 
   const say = (t) => { msg.textContent = t || ''; msg.hidden = !t }
   const btn = (a) => $(`[data-a="${a}"]`)
@@ -60,7 +63,7 @@ export function initStudio() {
     catch (e) { say(describeError(e)); if (!cam.active) stopLoop(); return }
     running = true; say(''); sync(); loadTracker(); cancelAnimationFrame(raf); loop()
   }
-  function stopLoop() { running = false; cancelAnimationFrame(raf); face.reset(); hint.hidden = true; sync() }
+  function stopLoop() { running = false; cancelAnimationFrame(raf); face.reset(); lastLm = null; hint.hidden = true; sync() }
   function stop() {
     cam.stop(); stopLoop(); octx.clearRect(0, 0, out.width, out.height)
     say('Camera is off. Press Start Camera to continue.')
@@ -75,12 +78,17 @@ export function initStudio() {
     raf = requestAnimationFrame(loop)
     if (vid.readyState < 2 || !vid.videoWidth) return
     const w = vid.videoWidth, h = vid.videoHeight
-    if (out.width !== w || out.height !== h) [out, raw, fin].forEach((c) => { c.width = w; c.height = h })
+    if (out.width !== w || out.height !== h) {
+      [out, raw, fin].forEach((c) => { c.width = w; c.height = h })
+      $('.ts-view').style.setProperty('--ar', `${w} / ${h}`) // preview box follows the real camera shape
+    }
     rctx.save(); if (cam.mirror) { rctx.translate(w, 0); rctx.scale(-1, 1) } rctx.drawImage(vid, 0, 0, w, h); rctx.restore()
     fctx.drawImage(raw, 0, 0)
     let found = false
     if (tracker) {
-      const lm = tracker.detectForVideo(vid, performance.now()).faceLandmarks[0]
+      const now = performance.now()
+      if (now - lastDetect >= DETECT_MS) { lastDetect = now; lastLm = tracker.detectForVideo(vid, now).faceLandmarks[0] || null }
+      const lm = lastLm
       if (lm) {
         const M = face.update(lm, w, h, cam.mirror)
         drawMakeup(fctx, M, state, raw); drawJewellery(fctx, M, state, performance.now() / 1000); found = true
@@ -149,10 +157,22 @@ export function initStudio() {
   }
 
   function open() {
-    root.hidden = false; document.body.classList.add('studio-open'); renderList(); sync(); start()
+    lastOpener = document.activeElement
+    root.hidden = false; document.body.classList.add('studio-open'); renderList(); sync()
+    root.scrollTop = 0; $('.ts-x').focus({ preventScroll: true }); hooks.onOpen?.()
+    start() // runs from the tap on "Try It On", so the browser allows the camera prompt
   }
-  function close() { cam.stop(); stopLoop(); root.hidden = true; document.body.classList.remove('studio-open') }
+  function close() {
+    cam.stop(); stopLoop(); root.hidden = true; document.body.classList.remove('studio-open')
+    lastOpener?.focus?.({ preventScroll: true }); hooks.onClose?.()
+  }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !root.hidden) close() })
+  // switching tabs / locking the phone: release the camera and stop the loop, so battery and the camera light are not wasted
+  document.addEventListener('visibilitychange', () => {
+    if (root.hidden) return
+    if (document.hidden) { if (cam.active) { cam.stop(); stopLoop(); say('Camera paused. Press Start Camera to continue.') } }
+  })
+  addEventListener('pagehide', () => cam.stop())
 
   return { open, close }
 }

@@ -4,3 +4,21 @@
 
 [build.environment]
   NODE_VERSION = "20"
+
+# allow the camera for this site itself (needed for Try It On)
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Permissions-Policy = "camera=(self)"
+    X-Content-Type-Options = "nosniff"
+
+# big media files and built JS/CSS: let browsers keep them, so repeat visits are fast
+[[headers]]
+  for = "/videos/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

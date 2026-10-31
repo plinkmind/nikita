@@ -1,14 +1,15 @@
 :root{--brass:#E2BE7C;--ink:#F7F1E8;--muted:#D3CABD}
 *{box-sizing:border-box}
-html{background:#0D1118}
-body{margin:0;color:var(--ink);font-family:Figtree,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:17px;line-height:1.65;overflow-x:hidden}
+html{background:#0D1118;overflow-x:clip;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{margin:0;max-width:100%;overflow-x:clip;color:var(--ink);font-family:Figtree,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:17px;line-height:1.65;overflow-x:hidden}
 body.locked{overflow:hidden}
-#spacer{height:700vh} /* the scroll length of the whole journey */
+#spacer{height:700vh;height:700lvh} /* the scroll length of the whole journey */
+#probe{position:fixed;left:0;top:0;width:0;height:100vh;height:100lvh;visibility:hidden;pointer-events:none}
 #heroBg{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;object-position:66% center;will-change:transform}
 .heroShade{position:fixed;inset:0;background:linear-gradient(90deg,rgba(8,11,17,.86),rgba(8,11,17,.45) 55%,rgba(8,11,17,.2)),linear-gradient(0deg,rgba(8,11,17,.7),transparent 40%)}
 #gl{position:fixed;inset:0;width:100%;height:100%;display:block}
 .vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 45%,rgba(5,7,11,.75) 100%)}
-header{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;justify-content:space-between;align-items:center;padding:22px 5vw}
+header{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:22px max(5vw,env(safe-area-inset-right)) 22px max(5vw,env(safe-area-inset-left))}
 .logo{display:flex;align-items:center;gap:14px;text-decoration:none}
 .logo img{height:36px;width:auto;display:block}
 .logo .prod{font-size:12px;letter-spacing:.26em;text-transform:uppercase;color:var(--brass);padding-left:14px;border-left:1px solid rgba(255,255,255,.3)}
@@ -18,7 +19,7 @@ button.demo{background:rgba(226,190,124,.18);font:inherit;font-size:14px;cursor:
 .demo:hover{background:var(--brass);border-color:var(--brass);color:#0D1118}
 
 /* chapter text */
-.ch{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;justify-content:center;padding:0 7vw;opacity:0;pointer-events:none;will-change:transform,opacity}
+.ch{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;justify-content:center;padding:0 7vw;opacity:0;visibility:hidden;pointer-events:none;will-change:transform,opacity}
 .ch .box{width:min(460px,100%)}
 .ch.r .box{margin-left:auto}
 .k{font-size:13px;letter-spacing:.24em;text-transform:uppercase;color:var(--brass);margin:0 0 18px}
@@ -36,7 +37,8 @@ h1,h2{font-family:Italiana,"Didot",Georgia,serif;font-weight:400;line-height:1.0
 
 /* chapter dots + scroll hint */
 #dots{position:fixed;right:22px;top:50%;transform:translateY(-50%);z-index:20;display:flex;flex-direction:column;gap:12px}
-#dots button{width:9px;height:9px;border-radius:50%;border:1px solid rgba(255,255,255,.6);background:transparent;padding:0;cursor:pointer;transition:all .3s}
+#dots button{position:relative;width:9px;height:9px;border-radius:50%;border:1px solid rgba(255,255,255,.6);background:transparent;padding:0;cursor:pointer;transition:all .3s}
+#dots button::after{content:"";position:absolute;inset:-9px} /* bigger invisible tap area */
 #dots button.on{background:var(--brass);border-color:var(--brass);transform:scale(1.5)}
 #hint{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:20;font-size:12px;letter-spacing:.3em;text-transform:uppercase;color:var(--muted);text-align:center}
 #hint i{display:block;width:1px;height:40px;margin:10px auto 0;background:linear-gradient(var(--brass),transparent);animation:cue 1.8s infinite}
@@ -66,14 +68,95 @@ h1,h2{font-family:Italiana,"Didot",Georgia,serif;font-weight:400;line-height:1.0
 #enter:hover{background:var(--brass);color:#0D1118}
 @keyframes glow{50%{box-shadow:0 0 28px rgba(216,177,106,.55)}}
 
-@media (max-width:900px){
-  .ch{justify-content:flex-end;padding-bottom:11vh}
-  .ch.r .box{margin-left:0}
-  h1,h2{font-size:clamp(36px,10vw,54px)}
-  #dots{right:10px}
-  .logo .prod{display:none}
-}
-@media (prefers-reduced-motion:reduce){*{animation:none!important}}
-
 .tryon-cta{font:inherit;font-weight:500;padding:12px 26px;margin-bottom:16px;border-radius:999px;border:1px solid var(--brass);background:transparent;color:var(--ink);cursor:pointer;transition:background .25s,color .25s}
 .tryon-cta:hover{background:var(--brass);color:#0B0E14}
+
+/* ---------- keyboard focus (all screens) ---------- */
+:where(a,button,input):focus-visible{outline:2px solid var(--brass);outline-offset:3px}
+#dots button:focus-visible{outline-offset:6px}
+
+/* the finale swatches: the try-on studio has its own .sw, keep the two apart */
+.ch .sw{flex-wrap:wrap}
+.sw button{min-width:38px}
+
+/* ---------- tablets and phones held upright (single-column layout) ----------
+   Used when the screen is narrow AND taller than it is wide, so the 3D scene sits on top and text underneath. */
+@media (max-width:899px) and (max-aspect-ratio:5/4){
+  header{padding:max(12px,env(safe-area-inset-top)) max(4vw,env(safe-area-inset-right)) 12px max(4vw,env(safe-area-inset-left))}
+  .logo img{height:26px}
+  .logo .prod{display:none}
+  .hactions{gap:8px}
+  .demo,button.demo{font-size:12px;padding:7px 13px;min-height:36px;display:inline-flex;align-items:center}
+  .ch{justify-content:flex-end;padding:0 max(34px,env(safe-area-inset-right)) calc(9svh + env(safe-area-inset-bottom)) max(22px,env(safe-area-inset-left))}
+  .ch.r .box{margin-left:0}
+  .ch .box{width:min(520px,100%)}
+  .vignette{background:linear-gradient(0deg,rgba(5,7,11,.93) 0,rgba(5,7,11,.62) 36%,transparent 62%),radial-gradient(ellipse at center,transparent 50%,rgba(5,7,11,.6) 100%)}
+  .k{margin-bottom:10px;font-size:12px}
+  h1,h2{font-size:clamp(36px,10vw,54px);margin-bottom:12px}
+  .t{font-size:15.5px;line-height:1.55;margin-bottom:0}
+  #hint{display:none}
+  .ch.fin h2{font-size:clamp(32px,9vw,40px)}
+  .ch.fin .t{font-size:14.5px;margin-bottom:14px}
+  .tryon-cta{padding:10px 20px;margin-bottom:12px;min-height:44px}
+  .sw{margin-bottom:14px}
+  #demoForm input{flex-basis:100%;min-height:46px;font-size:16px} /* 16px stops iPhone Safari zooming into the field */
+  #demoForm button{width:100%;min-height:46px}
+  #dots{right:max(10px,env(safe-area-inset-right));bottom:calc(env(safe-area-inset-bottom) + 12px);top:auto;transform:none}
+}
+/* tablets (portrait): roomier type, and show the product name next to the logo */
+@media (min-width:600px) and (max-width:899px) and (max-aspect-ratio:5/4){
+  .logo img{height:30px}
+  .logo .prod{display:block}
+  .demo,button.demo{font-size:14px;padding:9px 18px}
+  .t{font-size:17px}
+  .ch .box{width:min(560px,100%)}
+}
+/* very small phones */
+@media (max-width:380px){
+  .demo,button.demo{padding:6px 10px}
+  .ch{padding-left:max(16px,env(safe-area-inset-left));padding-right:max(30px,env(safe-area-inset-right))}
+  .t{font-size:14.5px}
+  .sw button{width:36px;height:36px}
+}
+@media (max-width:420px){#toEnd{display:none}}
+/* short phones: the finale paragraph would push the form out of view */
+@media (max-width:899px) and (max-aspect-ratio:5/4) and (max-height:600px){
+  .ch.fin .t{display:none}
+}
+
+/* ---------- phones held sideways / short windows: keep the desktop side-by-side story, just smaller ---------- */
+@media (max-height:520px) and (min-aspect-ratio:5/4){
+  header{padding-top:max(8px,env(safe-area-inset-top));padding-bottom:8px}
+  .logo img{height:26px}
+  .demo,button.demo{font-size:12px;padding:6px 14px;min-height:36px}
+  .ch{padding-left:max(6vw,env(safe-area-inset-left));padding-right:max(6vw,env(safe-area-inset-right));padding-top:56px}
+  .ch .box{width:min(380px,46%)}
+  .k{font-size:11px;margin-bottom:6px}
+  h1,h2{font-size:clamp(26px,6vw,40px);margin-bottom:8px}
+  .t{font-size:13px;line-height:1.45;margin-bottom:10px}
+  .ch.fin h2{font-size:clamp(26px,6vw,36px)}
+  .tryon-cta{padding:7px 16px;margin-bottom:8px;min-height:40px}
+  .sw{margin-bottom:8px}.sw button{width:30px;height:30px;min-width:0}
+  #demoForm input,#demoForm button{padding:8px 14px;font-size:14px}
+  #hint{display:none}
+  #dots{right:max(10px,env(safe-area-inset-right))}
+}
+
+/* ---------- large screens: keep the cinematic desktop feel from stretching too far ---------- */
+@media (min-width:1600px){
+  .ch .box{width:min(520px,100%)}
+  .t{font-size:18px}
+}
+
+/* ---------- touch-friendly sizes ---------- */
+@media (pointer:coarse){
+  button.demo,.demo{min-height:40px;display:inline-flex;align-items:center}
+  #enter{min-height:48px}
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;scroll-behavior:auto!important}
+  .l-sub{opacity:1} /* its fade-in animation is switched off, so show it right away */
+  #hint i{transform:none}
+}

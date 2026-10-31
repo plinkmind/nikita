@@ -20,14 +20,20 @@ const CH = [
 ]
 const N = CH.length
 const $ = (s) => document.querySelector(s)
-const mobile = () => innerWidth < 900
+// "mobile" = the single-column layout: a narrow screen held upright (matches the CSS breakpoint)
+const mobile = () => innerWidth < 900 && innerWidth / innerHeight <= 1.25
+const touch = matchMedia('(pointer:coarse)').matches
+const reduceMotion = matchMedia('(prefers-reduced-motion:reduce)')
+const lowPower = touch && (navigator.hardwareConcurrency || 4) <= 4 // older or budget phones: fewer particles
 const glEl = $('#gl')
 const heroBg = $('#heroBg')
 heroBg.play().catch(() => {})
 
 /* ---------- scene ---------- */
-const renderer = new THREE.WebGLRenderer({ canvas: $('#gl'), antialias: true })
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+// phones get a lighter render (no antialiasing, lower pixel density) so scrolling stays smooth
+const renderer = new THREE.WebGLRenderer({ canvas: $('#gl'), antialias: !(touch && Math.min(innerWidth, innerHeight) < 600), powerPreference: 'high-performance' })
+let pixelRatio = Math.min(devicePixelRatio, touch ? 1.5 : 2) // lowered automatically if the device cannot keep up (see tick)
+renderer.setPixelRatio(pixelRatio)
 const scene = new THREE.Scene()
 const bg = new THREE.Color(CH[0].color)
 scene.background = bg
@@ -49,7 +55,7 @@ const glassGeo = new THREE.CircleGeometry(1, 96)
 
 function makeMirror(ch) {
   const v = document.createElement('video')
-  Object.assign(v, { src: `/videos/${ch.video}.mp4`, muted: true, loop: true, playsInline: true, preload: 'auto' })
+  Object.assign(v, { src: `/videos/${ch.video}.mp4`, muted: true, loop: true, playsInline: true, preload: 'metadata' }) // full download starts after "Enter", so the hero video loads first
   const tex = new THREE.VideoTexture(v)
   tex.colorSpace = THREE.SRGBColorSpace
   if (ch.crop) { tex.repeat.set(ch.crop[0], 1); tex.offset.set(ch.crop[1], 0) }
@@ -96,7 +102,7 @@ const items = CH.map((ch, i) => {
 })
 
 // gold dust along the whole path
-const DN = 700, dp = new Float32Array(DN * 3)
+const DN = lowPower ? 220 : touch ? 350 : 700, dp = new Float32Array(DN * 3)
 for (let i = 0; i < DN; i++) { dp[i * 3] = (Math.random() - 0.5) * 24; dp[i * 3 + 1] = (Math.random() - 0.5) * 12; dp[i * 3 + 2] = 10 - Math.random() * (GAP * N + 14) }
 const dustGeo = new THREE.BufferGeometry(); dustGeo.setAttribute('position', new THREE.BufferAttribute(dp, 3))
 const dustMat = new THREE.PointsMaterial({ color: ACCENTS[0].c, size: 0.035, transparent: true, opacity: 0.7 })
@@ -109,7 +115,7 @@ const FINALE = `
   <form id="demoForm"><input type="email" placeholder="Your work email" required><button type="submit">Request a demo</button></form>`
 CH.forEach((c, i) => {
   const s = document.createElement('section')
-  s.className = 'ch ' + (items[i].side === 1 ? 'l' : 'r')
+  s.className = 'ch ' + (items[i].side === 1 ? 'l' : 'r') + (c.finale ? ' fin' : '')
   s.innerHTML = `<div class="box"><p class="k">${c.k}</p><h${i ? 2 : 1}>${c.h}</h${i ? 2 : 1}><p class="t">${c.p}</p>${c.finale ? FINALE : ''}</div>`
   $('#chs').appendChild(s)
   const d = document.createElement('button'); d.setAttribute('aria-label', 'Go to chapter ' + (i + 1))
@@ -132,74 +138,137 @@ $('#demoForm').addEventListener('submit', (e) => {
 })
 
 /* ---------- scroll + animation ---------- */
-const maxScroll = () => document.documentElement.scrollHeight - innerHeight
+// The scroll length is measured against the tallest phone viewport (#probe = 100lvh), so the browser's
+// address bar sliding in and out never changes the scroll progress. It is cached, not re-measured on every scroll.
+const probe = $('#probe')
+let maxS = 1
+const measure = () => { maxS = Math.max(1, document.documentElement.scrollHeight - probe.offsetHeight) }
+const maxScroll = () => maxS
 let target = 0, cur = 0, mx = 0, my = 0
-addEventListener('scroll', () => { target = scrollY / maxScroll() }, { passive: true })
-addEventListener('mousemove', (e) => { mx = e.clientX / innerWidth - 0.5; my = e.clientY / innerHeight - 0.5 }, { passive: true })
+addEventListener('scroll', () => { target = Math.min(1, Math.max(0, scrollY / maxS)) }, { passive: true })
+if (!touch && !reduceMotion.matches) addEventListener('mousemove', (e) => { mx = e.clientX / innerWidth - 0.5; my = e.clientY / innerHeight - 0.5 }, { passive: true })
 $('#toEnd').onclick = (e) => { e.preventDefault(); scrollTo({ top: maxScroll(), behavior: 'smooth' }) }
 $('#top').onclick = (e) => { e.preventDefault(); scrollTo({ top: 0, behavior: 'smooth' }) }
 
-function resize() {
-  renderer.setSize(innerWidth, innerHeight)
-  cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix()
+let lastW = 0, lastH = 0
+function resize(force) {
+  const w = innerWidth, h = innerHeight
+  // On phones, the address bar sliding away changes innerHeight by ~60-120px. Re-sizing the canvas for that causes flicker
+  // and jumps, so small height-only changes are ignored.
+  if (!force && touch && w === lastW && Math.abs(h - lastH) < 160) return
+  lastW = w; lastH = h
+  measure()
+  renderer.setPixelRatio(pixelRatio)
+  renderer.setSize(w, h)
+  cam.aspect = w / h
+  cam.fov = cam.aspect < 0.8 ? 55 : 42 // wider view on tall phone screens
+  cam.updateProjectionMatrix()
+  const m = mobile(), short = h < 520 && w / h > 1.25
+  const scale = m ? (w >= 600 ? 0.9 : 0.8) : short ? 0.85 : 1 // phone 0.8, tablet 0.9, sideways phone 0.85, laptop/desktop 1
   items.forEach((it) => {
-    it.stage.position.x = mobile() ? 0 : it.side * 2.6
-    it.stage.position.y = mobile() ? 1 : 0
-    it.stage.scale.setScalar(mobile() ? 0.7 : 1)
+    it.stage.position.x = m ? 0 : it.side * 2.6
+    it.stage.position.y = m ? 1.3 : 0
+    it.stage.scale.setScalar(scale)
   })
 }
-addEventListener('resize', resize); resize()
+let resizeTimer = 0
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(resize, 120) }) // wait until resizing/rotating settles
+addEventListener('orientationchange', () => setTimeout(() => resize(true), 300))
+addEventListener('load', measure)
+resize(true)
+renderer.compile(scene, cam) // compile shaders now, not on the first scroll
 
 const tmp = new THREE.Color()
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v))
+const hintEl = $('#hint')
+const last = texts.map(() => ({ o: -1, y: 1e9, vis: '' })) // what we last wrote to each chapter, to skip needless DOM writes
+let lastCo = -1, lastHint = -1, lastDot = -1
+
+/* One animation loop only. It stops while the tab is hidden or the try-on studio is open, and restarts afterwards. */
+let rafId = 0, frames = 0, slow = 0, prevMs = 0
+const studioOpen = () => document.body.classList.contains('studio-open')
+const startLoop = () => { if (!rafId) { prevMs = 0; rafId = requestAnimationFrame(tick) } }
+const stopLoop = () => { cancelAnimationFrame(rafId); rafId = 0 }
+const pauseVideos = () => { items.forEach((it) => it.video && !it.video.paused && it.video.pause()); if (!heroBg.paused) heroBg.pause() }
+document.addEventListener('visibilitychange', () => { if (document.hidden) { stopLoop(); pauseVideos() } else if (!studioOpen()) startLoop() })
+
+// If the device cannot hold ~40fps, lower the render sharpness a step (never below 1x) instead of stuttering.
+function watchSpeed(dt) {
+  if (dt > 120) return // a tab switch or a hiccup, not a real measurement
+  frames++
+  if (frames < 60) return // let the first second settle (shader compile, video start)
+  slow = slow * 0.95 + dt * 0.05
+  if (slow > 26 && pixelRatio > 1) {
+    pixelRatio = Math.max(1, pixelRatio - 0.25); slow = 16
+    renderer.setPixelRatio(pixelRatio); renderer.setSize(innerWidth, innerHeight)
+  }
+}
+
 function tick(ms) {
-  requestAnimationFrame(tick)
-  if (document.body.classList.contains('studio-open')) return // pause the 3D scene while the try-on studio is open
-  const time = ms / 1000
-  cur += (target - cur) * 0.06
+  rafId = requestAnimationFrame(tick)
+  const dt = prevMs ? ms - prevMs : 16; prevMs = ms
+  watchSpeed(dt)
+  const time = reduceMotion.matches ? 0 : ms / 1000 // reduced motion: no floating, spinning or waving, scrolling still works
+  cur += (target - cur) * (reduceMotion.matches ? 0.25 : 0.06)
   const t = cur * (N - 1)
   const camZ = 7 - t * GAP
   cam.position.set(Math.sin(t * 1.3) * 0.5 + mx * 0.6, 0.2 - my * 0.4, camZ)
   cam.lookAt(cam.position.x * 0.3, -0.1, camZ - 10)
   // first page: full-screen video; the 3D world fades in over it as you scroll
   const co = clamp((t - 0.3) / 0.6, 0, 1)
-  glEl.style.opacity = co
-  heroBg.style.transform = `scale(${1.04 + t * 0.1})`
-  if (co >= 1) { if (!heroBg.paused) heroBg.pause() } else if (heroBg.paused) heroBg.play().catch(() => {})
+  if (co !== lastCo) {
+    glEl.style.opacity = co
+    heroBg.style.visibility = co >= 1 ? 'hidden' : 'visible' // fully covered by the 3D scene: no need to composite it
+    lastCo = co
+  }
+  if (co < 1) heroBg.style.transform = `scale(${1.04 + t * 0.1})`
+  if (co >= 1) { if (!heroBg.paused) heroBg.pause() } else if (heroBg.paused && !document.hidden) heroBg.play().catch(() => {})
   bg.lerp(tmp.set(CH[clamp(Math.round(t), 0, N - 1)].color), 0.04)
   scene.fog.color.copy(bg)
 
+  const ready = document.body.classList.contains('ready')
   items.forEach((it, i) => {
     const d = Math.abs(t - i)
     if (it.video) {
-      if (d < 1.1 && document.body.classList.contains('ready')) { if (it.video.paused) it.video.play().catch(() => {}) }
+      if (d < 1.1 && ready) { if (it.video.paused) it.video.play().catch(() => {}) }
       else if (!it.video.paused) it.video.pause()
     }
-    if (it.mirror) {
-      it.mirror.position.y = Math.sin(time + i) * 0.08
-      it.mirror.rotation.y = -it.side * 0.25 + Math.sin(time * 0.5 + i) * 0.12 + mx * 0.25
-    }
-    const p = it.prop
-    if (p) {
-      if (it.ch.prop === 'rings') p.children.forEach((r, k) => { r.rotation.x = time * (0.3 + k * 0.12); r.rotation.y = time * (0.2 + k * 0.1) })
-      else { p.position.y = -0.5 + Math.sin(time * 1.2 + i) * 0.1; p.rotation.y = time * 0.6 }
-      const cloth = p.userData.cloth
-      if (cloth) {
-        const pos = cloth.geometry.attributes.position, b = cloth.userData.base
-        for (let k = 0; k < pos.count; k++) { const x = b[k * 3], y = b[k * 3 + 1]; pos.array[k * 3 + 2] = Math.sin(x * 3.2 + y * 1.5 + time * 1.6) * 0.2 * (0.6 - y * 0.5) }
-        pos.needsUpdate = true; cloth.geometry.computeVertexNormals(); p.rotation.y = 0.4
+    const near = d < 1.8 // chapters further away are lost in the fog: do not draw or animate them
+    it.stage.parent.visible = near
+    if (near) {
+      if (it.mirror) {
+        it.mirror.position.y = Math.sin(time + i) * 0.08
+        it.mirror.rotation.y = -it.side * 0.25 + Math.sin(time * 0.5 + i) * 0.12 + mx * 0.25
+      }
+      const p = it.prop
+      if (p) {
+        if (it.ch.prop === 'rings') p.children.forEach((r, k) => { r.rotation.x = time * (0.3 + k * 0.12); r.rotation.y = time * (0.2 + k * 0.1) })
+        else { p.position.y = -0.5 + Math.sin(time * 1.2 + i) * 0.1; p.rotation.y = time * 0.6 }
+        const cloth = p.userData.cloth
+        if (cloth) {
+          const pos = cloth.geometry.attributes.position, b = cloth.userData.base
+          for (let k = 0; k < pos.count; k++) { const x = b[k * 3], y = b[k * 3 + 1]; pos.array[k * 3 + 2] = Math.sin(x * 3.2 + y * 1.5 + time * 1.6) * 0.2 * (0.6 - y * 0.5) }
+          pos.needsUpdate = true; cloth.geometry.computeVertexNormals(); p.rotation.y = 0.4
+        }
       }
     }
-    const el = texts[i], o = clamp(1 - d * 2.4, 0, 1)
-    el.style.opacity = o
-    el.style.transform = `translateY(${(i - t) * 60}px)`
+    // text overlay: only touch the DOM when something actually changed
+    const el = texts[i], o = clamp(1 - d * 2.4, 0, 1), L = last[i]
+    const y = Math.round((i - t) * 60 * 10) / 10
+    if (o > 0) {
+      if (L.vis !== 'visible') { el.style.visibility = 'visible'; L.vis = 'visible' }
+      if (Math.abs(o - L.o) > 0.004) { el.style.opacity = o; L.o = o }
+      if (Math.abs(y - L.y) > 0.2) { el.style.transform = `translate3d(0,${y}px,0)`; L.y = y }
+    } else if (L.vis !== 'hidden') { el.style.visibility = 'hidden'; el.style.opacity = 0; L.vis = 'hidden'; L.o = 0 }
     el.style.pointerEvents = o > 0.5 ? 'auto' : 'none'
-    dots[i].classList.toggle('on', Math.round(t) === i)
   })
-  $('#hint').style.opacity = clamp(1 - target * 25, 0, 1)
+  const cd = Math.round(t)
+  if (cd !== lastDot) { dots.forEach((dEl, i) => dEl.classList.toggle('on', i === cd)); lastDot = cd }
+  const ho = Math.round(clamp(1 - target * 25, 0, 1) * 100) / 100
+  if (ho !== lastHint) { hintEl.style.opacity = ho; lastHint = ho }
   renderer.render(scene, cam)
 }
-requestAnimationFrame(tick)
+startLoop()
 
 /* ---------- loader + mirror break ---------- */
 document.body.classList.add('locked')
@@ -254,6 +323,8 @@ function shatter() {
   document.body.classList.remove('locked')
   document.body.classList.add('ready')
   scrollTo(0, 0)
+  // unlock video playback on iPhone (needs a tap): briefly play each clip
+  items.forEach((it) => it.video && it.video.play().then(() => { if (Math.abs(0 - it.i) > 1) it.video.pause() }).catch(() => {}))
   loader.style.background = 'transparent'
   shards.forEach(({ el, cx, cy }) => {
     const dx = cx - 50, dy = cy - 50, dist = Math.hypot(dx, dy) / 70
@@ -269,5 +340,9 @@ function shatter() {
 }
 
 /* ---------- virtual try-on studio ---------- */
-const studio = initStudio()
+const studio = initStudio({
+  // the 3D scene sleeps while the studio covers it, so the camera and face tracking get all of the phone's power
+  onOpen: () => { stopLoop(); pauseVideos() },
+  onClose: () => { if (!document.hidden) startLoop() },
+})
 document.querySelectorAll('[data-tryon]').forEach((b) => b.addEventListener('click', () => studio.open()))

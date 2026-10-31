@@ -1,10 +1,11 @@
 // MediaPipe Face Landmarker + smoothing + head pose (roll, turn, scale).
-import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
+// The MediaPipe library is large, so it is only downloaded when the studio actually needs it (dynamic import below).
 
 const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm'
 const MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
 
 export async function createTracker() {
+  const { FaceLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision')
   const files = await FilesetResolver.forVisionTasks(WASM)
   const make = (delegate) => FaceLandmarker.createFromOptions(files, {
     baseOptions: { modelAssetPath: MODEL, delegate }, runningMode: 'VIDEO', numFaces: 1,

@@ -1,13 +1,13 @@
 /* Virtual Try-On Studio: same ink, gold and ivory as the main site */
-.ts{position:fixed;inset:0;z-index:300;display:flex;flex-direction:column;background:radial-gradient(900px 500px at 80% 0,rgba(226,190,124,.1),transparent 60%),#0B0E14;color:var(--ink,#F7F1E8);font-family:Figtree,system-ui,sans-serif}
+.ts{position:fixed;inset:0;height:100vh;height:100dvh;z-index:300;overscroll-behavior:contain;display:flex;flex-direction:column;background:radial-gradient(900px 500px at 80% 0,rgba(226,190,124,.1),transparent 60%),#0B0E14;color:var(--ink,#F7F1E8);font-family:Figtree,system-ui,sans-serif}
 .ts[hidden]{display:none}
 body.studio-open{overflow:hidden}
-.ts-head{display:flex;justify-content:space-between;align-items:center;padding:16px 4vw;border-bottom:1px solid rgba(255,255,255,.12)}
+.ts-head{flex:none;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 4vw;border-bottom:1px solid rgba(255,255,255,.12)}
 .ts-k{font-size:12px;letter-spacing:.26em;text-transform:uppercase;color:#E2BE7C}
 .ts-head h2{font-family:Italiana,Georgia,serif;font-weight:400;font-size:clamp(26px,3.4vw,40px);margin:2px 0 0;line-height:1.1}
 .ts-x{background:none;border:1px solid rgba(255,255,255,.3);color:#fff;width:42px;height:42px;border-radius:50%;font-size:24px;cursor:pointer;line-height:1}
 .ts-x:hover{border-color:#E2BE7C;color:#E2BE7C}
-.ts-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:22px;padding:18px 4vw 22px}
+.ts-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) clamp(300px,32vw,380px);gap:22px;padding:18px 4vw 22px}
 .ts-stage{min-width:0;display:flex;flex-direction:column;gap:14px;min-height:0}
 .ts-view{position:relative;flex:1;min-height:260px;border-radius:22px;overflow:hidden;border:1px solid rgba(226,190,124,.45);background:#06080c;display:grid;place-items:center}
 .ts-out{width:100%;height:100%;object-fit:contain;display:block;transition:filter .2s}
@@ -51,9 +51,66 @@ body.studio-open{overflow:hidden}
 .ts-shot[hidden]{display:none}
 .ts-shot img{width:100%;border-radius:14px;border:1px solid rgba(226,190,124,.45)}
 .ts-shot a{color:#E2BE7C;font-size:14px}
-@media (max-width:900px){
-  .ts{overflow:auto}
-  .ts-body{grid-template-columns:1fr;display:flex;flex-direction:column}
-  .ts-view{min-height:55vh;flex:none}
-  .ts-panel{overflow:visible}
+/* ============ RESPONSIVE LAYOUT ============
+   Stacked by default (phones, portrait tablets): camera on top, controls below, the whole studio scrolls.
+   Side by side (laptops, desktops, landscape tablets): camera left, controls right, panel scrolls on its own. */
+.ts{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+.ts-head{padding-top:max(12px,env(safe-area-inset-top))}
+.ts-x{flex:none;width:44px;height:44px}
+.ts button:focus-visible,.ts input:focus-visible,.ts a:focus-visible{outline:2px solid #E2BE7C;outline-offset:3px}
+.ts-bar button,.ts-foot button,.ts-tabs button,.chip,.tag{min-height:44px}
+.tag{min-height:36px}
+
+@media (max-width:899px) and (orientation:portrait),(max-width:639px){
+  .ts{overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .ts-head{position:sticky;top:0;z-index:5;background:#0B0E14}
+  .ts-body{flex:none;display:flex;flex-direction:column;min-height:auto;gap:14px;padding:12px 4vw calc(24px + env(safe-area-inset-bottom))}
+  .ts-stage{flex:none;min-height:auto;gap:12px}
+  /* the camera box takes the real shape of the camera and can never be taller than 62% of the screen */
+  .ts-view{flex:none;width:100%;min-height:0;height:auto;aspect-ratio:var(--ar,3 / 4);max-height:62vh;max-height:62svh;border-radius:18px}
+  .ts-bar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .ts-bar button{padding:10px 8px;font-size:14px}
+  .ts-panel{flex:none;overflow:visible;padding-right:0;min-height:auto}
+  .ts-foot button{width:100%}
+  .ts-msg{font-size:14px;padding:20px}
+  .ts-hint{max-width:92%;text-align:center;font-size:12px}
 }
+@media (min-width:480px) and (max-width:899px) and (orientation:portrait){
+  .ts-bar{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+/* small phones */
+@media (max-width:380px){
+  .ts-head h2{font-size:24px}
+  .ts-bar button{font-size:13px;padding:10px 4px}
+  .chip{padding:8px 12px}
+}
+/* portrait tablets below 900px wide (e.g. iPad mini/Air 768x1024): stacked, camera capped so controls stay in reach */
+@media (min-width:700px) and (max-width:899px) and (orientation:portrait){
+  .ts-body{padding-left:5vw;padding-right:5vw}
+  .ts-view{max-height:58svh}
+  .ts-bar{display:flex;flex-wrap:wrap;gap:10px}
+  .ts-bar button{flex:0 0 auto;padding:10px 20px;white-space:nowrap}
+}
+/* landscape phones and short windows: keep camera and controls side by side, controls scroll */
+@media (orientation:landscape) and (max-height:520px) and (min-width:560px){
+  .ts-head{padding-top:max(6px,env(safe-area-inset-top));padding-bottom:6px}
+  .ts-head h2{font-size:22px}
+  .ts-x{width:40px;height:40px}
+  .ts-body{grid-template-columns:minmax(0,1fr) clamp(240px,38vw,340px);gap:12px;padding:10px 3vw calc(10px + env(safe-area-inset-bottom))}
+  .ts-view{min-height:0}
+  .ts-bar{gap:6px}
+  .ts-bar button{padding:6px 12px;font-size:13px;min-height:40px}
+  .ts-panel{overflow-y:auto;-webkit-overflow-scrolling:touch}
+}
+/* touch screens: bigger targets */
+@media (pointer:coarse){
+  .sw{width:40px;height:40px}
+  .ts-sw{gap:12px}
+  .ts-rng input{height:32px}
+  .ts-split{height:32px}
+}
+@media (prefers-reduced-motion:reduce){.ts *{transition:none!important}}
+
+/* the main page also has a .sw row (finale swatches); make sure its layout rules never leak into the studio */
+.ts-sw .sw{display:block;margin:0;min-width:0}
+.ts-rm{min-height:44px;display:inline-flex;align-items:center}
