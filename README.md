@@ -126,3 +126,20 @@ Tested (in a real headless Chromium browser):
 - No `package-lock.json` is included (it is created the first time you run `npm install`).
 
 Your original ZIP (`glamify-xr (4).zip`) was not changed. Keep it as your backup.
+
+---
+
+## G. Update 2: jewellery, catalogue, saved looks, compare
+
+**Done and tested in a browser (with a fake camera, no real face):**
+- **Jewellery fixes.** Why it drifted: earrings were anchored on the cheek/jaw (not the ear), necklaces were anchored to the chin at jaw height, and the face was cleared the instant tracking dropped. Now: earrings sit at the ear lobe using the head's own left-right and up directions (so they follow tilt and turn, and fade out on the far ear when the head turns); necklaces use the shoulders from the Pose model when it finds them (downloaded only when a necklace is applied) and otherwise a face-based estimate; tracking smoothing adapts to speed (steady when still, responsive when moving); the last position is held for 0.3 seconds if tracking blinks.
+- **Catalogue** (`src/tryon/catalog.js`): products are grouped (Earrings, Necklaces, Nose rings, Head jewellery, Makeup). All entries are labelled demonstration entries: no brands, prices or stock. Products show a small colour icon; set `image: '/images/x.jpg'` on a product to show a photo instead.
+- **Favourites** (star on any product), **Save Look** (saves products + a photo from the camera), **Saved** tab (open or delete looks), **Compare** tab (two saved looks side by side), **Share** button (only appears where the browser supports sharing files).
+- Everything is stored **in this browser only** (`localStorage`). There is no account or cloud sync.
+- Fixed a layout bug where the side panel squeezed its sections on laptop-height screens.
+
+**Adding products later:** add an entry to `MAKEUP` in `makeup.js` or `JEWELLERY` in `jewellery.js`, then list its id in a group in `catalog.js`.
+
+**Not tested (needs a real person, camera and internet):** real face and shoulder tracking accuracy, the Pose model download (`pose_landmarker_lite` from Google storage; if it fails, necklaces silently use the face-based estimate), iPhone/iPad Safari, Android Chrome.
+
+**Not built yet (be aware, there are no placeholder buttons for these):** Nail try-on, hairstyles and hair colours, dress/outfit try-on, Shop & Try On (Amazon / Meesho / Myntra), AI style assistant, uploaded-photo try-on, backend/accounts.

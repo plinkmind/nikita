@@ -33,11 +33,15 @@ const quad = (a, b, k, t) => ({ x: (1 - t) * (1 - t) * a.x + 2 * (1 - t) * t * k
 // draw in local coordinates: origin at (x,y), rotated with the head
 const at = (c, x, y, rot, fn) => { c.save(); c.translate(x, y); c.rotate(rot); fn(); c.restore() }
 
-const EARS = (M) => [[234, 132], [454, 361]].map(([e, j]) => {
-  const P = M.P, lobe = { x: P[e].x + (P[j].x - P[e].x) * 0.38, y: P[e].y + (P[j].y - P[e].y) * 0.38 }
-  const sx = Math.sign(lobe.x - P[1].x) || 1
-  lobe.x += sx * M.fw * 0.012
-  return { lobe, sx, hidden: sx * M.yaw > 0.14 } // ear on the far side of a turned head is hidden
+// Ears are not part of the face mesh. The mesh edge points 234 / 454 sit at ear level on the outline of the face, so the
+// earlobe is found by moving OUTWARD along the head's own left-right axis and DOWN along the head's own up axis.
+// Both directions come from the tracked landmarks, so the earring follows head tilt and turn, and nothing is a fixed screen position.
+const clamp01 = (v) => Math.max(0, Math.min(1, v))
+const EARS = (M) => [[234, 454], [454, 234]].map(([e, o]) => {
+  const P = M.P, d = { x: P[e].x - P[o].x, y: P[e].y - P[o].y }, l = Math.hypot(d.x, d.y) || 1
+  const lobe = { x: P[e].x + (d.x / l) * M.fw * 0.045 - M.up.x * M.fh * 0.15, y: P[e].y + (d.y / l) * M.fw * 0.045 - M.up.y * M.fh * 0.15 }
+  const sx = Math.sign(P[e].x - P[1].x) || 1
+  return { lobe, sx, vis: clamp01((0.2 - sx * M.yaw) / 0.1) } // the ear on the far side of a turned head fades out instead of popping
 })
 
 const ear = {
@@ -75,11 +79,21 @@ const nose = (c, M, id, col, u, T) => {
   })
 }
 
+// Necklaces use the shoulders when the pose model has found them (M.shoulders), otherwise they are estimated from the face.
+// Size follows shoulder width (or face width), and the necklace turns with the shoulder line (or head tilt).
 function neck(c, M, id, col, u, T) {
-  const { P, fw, fh, roll } = M, ch = P[152]
-  at(c, ch.x, ch.y, roll, () => {
-    const A = { x: -fw * 0.46, y: fh * 0.16 }, B = { x: fw * 0.46, y: fh * 0.16 }
-    const K = { x: 0, y: fh * (id === 'chain' || id === 'pendant' ? 1.18 : 0.78) }
+  const { P, fw, fh, roll } = M, ch = P[152], S = M.shoulders, k = u / fw // k = 1 at the default size
+  const long = id === 'chain' || id === 'pendant'
+  let o, rot, A, B, K
+  if (S) {
+    const mid = { x: (S.l.x + S.r.x) / 2, y: (S.l.y + S.r.y) / 2 }, sw = Math.hypot(S.r.x - S.l.x, S.r.y - S.l.y)
+    o = { x: mid.x + (ch.x - mid.x) * 0.22, y: mid.y + (ch.y - mid.y) * 0.22 }; rot = Math.atan2(S.r.y - S.l.y, S.r.x - S.l.x)
+    A = { x: -sw * 0.19 * k, y: -sw * 0.03 }; B = { x: sw * 0.19 * k, y: -sw * 0.03 }; K = { x: 0, y: sw * (long ? 0.95 : 0.34) * k }
+  } else {
+    o = ch; rot = roll
+    A = { x: -fw * 0.36 * k, y: fh * 0.3 }; B = { x: fw * 0.36 * k, y: fh * 0.3 }; K = { x: 0, y: fh * (long ? 1.6 : 0.95) * k }
+  }
+  at(c, o.x, o.y, rot, () => {
     if (id === 'necklace') { // beaded necklace with a centre gem
       for (let t = 0; t <= 1.001; t += 0.035) { const p = quad(A, B, K, t); circle(c, p.x, p.y, u * 0.016, metal(c, col, u * 0.02)) }
       const m = quad(A, B, K, 0.5); bezel(c, col, m.x, m.y + u * 0.02, u * 0.028, T, '#ffd9e6')
@@ -119,7 +133,7 @@ export function drawJewellery(c, M, state, T) {
   const ears = EARS(M)
   ;['studs', 'earrings', 'hoops', 'jhumkas'].forEach((id) => {
     if (!state[id]) return
-    ears.forEach((e) => { if (!e.hidden) at(c, e.lobe.x, e.lobe.y, M.roll, () => ear[id](c, U(id), col(id), T, M)) })
+    ears.forEach((e) => { if (e.vis > 0) { c.save(); c.globalAlpha *= e.vis; at(c, e.lobe.x, e.lobe.y, M.roll, () => ear[id](c, U(id), col(id), T, M)); c.restore() } })
   })
   ;['nosering', 'nosepin'].forEach((id) => { if (state[id]) nose(c, M, id, col(id), U(id), T) })
 }

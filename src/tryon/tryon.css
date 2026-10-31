@@ -114,3 +114,34 @@ body.studio-open{overflow:hidden}
 /* the main page also has a .sw row (finale swatches); make sure its layout rules never leak into the studio */
 .ts-sw .sw{display:block;margin:0;min-width:0}
 .ts-rm{min-height:44px;display:inline-flex;align-items:center}
+
+/* ---------- catalogue groups, favourites, saved looks, compare ---------- */
+.ts-tabs button{padding:11px 4px;font-size:13px;min-width:0}
+.ts-list{display:block}
+.ts-list[hidden]{display:none}
+.ts-grp{display:grid;gap:8px;margin-bottom:14px}
+.ts-grp h3{margin:0;font:inherit;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#E2BE7C;font-weight:500}
+.ts-chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:8px}
+.pi{display:inline-block;width:14px;height:14px;border-radius:50%;flex:none;box-shadow:0 0 0 1px rgba(255,255,255,.4);object-fit:cover}
+.ts-row{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center}
+.ts-fav{background:none;border:0;color:#E2BE7C;cursor:pointer;padding:0;min-height:44px}
+.ts-empty{margin:0;color:#D3CABD;font-size:14px;line-height:1.55}
+.ts-looks{display:grid;gap:4px}
+.ts-looks[hidden]{display:none}
+.lk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.lk-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.lk{margin:0;border:1px solid rgba(226,190,124,.4);border-radius:14px;overflow:hidden;background:rgba(255,255,255,.04);display:flex;flex-direction:column}
+.lk img,.lk-ph{width:100%;aspect-ratio:3 / 4;object-fit:cover;display:block;background:#06080c}
+.lk-ph{display:grid;place-items:center;color:#D3CABD;font-size:13px}
+.lk figcaption{display:grid;gap:4px;padding:10px;font-size:13px}
+.lk small{color:#D3CABD;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
+.lk-act{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.lk-act button{flex:1 1 auto;min-height:40px;padding:6px 10px;border-radius:999px;border:1px solid rgba(226,190,124,.6);background:transparent;color:#F7F1E8;cursor:pointer}
+.lk-act button:hover{background:#E2BE7C;color:#0B0E14}
+.lk-pick{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.lk-pick label{display:grid;gap:4px;font-size:12px;color:#D3CABD}
+.lk-pick select{min-height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:#11151d;color:#F7F1E8;font:inherit;font-size:15px;padding:0 10px;width:100%}
+.ts-shot button{justify-self:start;min-height:44px;padding:8px 18px;border-radius:999px;border:1px solid rgba(226,190,124,.6);background:transparent;color:#F7F1E8;cursor:pointer}
+@media (max-width:380px){.lk-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ts-tabs button{font-size:12px}}
+.ts-panel>*{flex-shrink:0} /* sections keep their height and the panel scrolls, instead of squeezing and overlapping */
