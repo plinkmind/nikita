@@ -1,0 +1,9 @@
+{
+  "name": "glamify-xr-ai-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend for AI photo-based try-on (outfits via Vertex AI Virtual Try-On, hairstyles via Gemini image editing). No dependencies.",
+  "engines": { "node": ">=18" },
+  "scripts": { "start": "node index.js", "test": "node test.mjs" }
+}

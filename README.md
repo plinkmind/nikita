@@ -166,3 +166,40 @@ All three are in the Try-On Studio as tabs (Hair, Outfits, Nails). Each download
 
 **Tested:** the studio running in a real browser with a fake camera and *simulated* tracking data (all three features applied together, saved as a look, at 8 screen sizes, no errors), plus drawing checks on synthetic head, body and hand shapes.
 **Not tested:** the real hand, body and hair-segmentation models (they need internet and a real person), real-hand palm/back detection, and any iPhone/iPad/Android hardware. The model files are loaded from Google's public MediaPipe storage; if they fail to load the studio shows a message and everything else keeps working.
+
+---
+
+## I. Update 4: tracking foundation and AI photo try-on
+
+Read `TRACKING-AUDIT.md` (what was wrong and why), `TRYON-MODELS.md` (which AI models, licences, costs) and `TESTING-REPORT.md` (what was and was not tested).
+
+### See your real tracking quality
+Open the site with `?debug` at the end of the address (for example `http://localhost:5173/?debug`), press **Try It On**. The preview shows landmarks and live numbers. Send me screenshots from your phone.
+
+### AI Photo tab: how it works
+The **AI Photo** tab makes a **generated image** (not a live preview). You choose your photo + a garment photo (outfit) or a hairstyle, tick a consent box, and press **Create AI try-on**. The photos go to **your own server** (the `server` folder), which sends them to **Google Cloud** and returns the result. Nothing is sent before you press the button. Until you set the server up, the tab honestly says it is not available.
+
+- Outfits use Google's **Virtual Try-On** model (commercial licence; about $0.06 per image, check Google's price page). Note Google lists its discontinuation as **20 January 2027**: change `TRYON_MODEL` when a newer one exists.
+- Hairstyles use **Gemini image editing**: a general image editor, so the face may change slightly. There is no identity guarantee.
+- The open-source try-on models (IDM-VTON, CatVTON, OOTDiffusion) are **non-commercial licences**, so they are not used.
+
+### Set up the AI server (one time, needs a Google Cloud account with billing)
+1. Create a project at https://console.cloud.google.com and note the **project ID**. Turn on billing. Set a **budget alert** so costs cannot surprise you.
+2. Install the Google Cloud CLI (https://cloud.google.com/sdk/docs/install), then in the terminal:
+   ```
+   gcloud auth login
+   gcloud config set project YOUR_PROJECT_ID
+   gcloud services enable aiplatform.googleapis.com run.googleapis.com cloudbuild.googleapis.com
+   cd server
+   gcloud run deploy glamify-ai --source . --region us-central1 --allow-unauthenticated --no-cpu-throttling --max-instances 1 --set-env-vars GCP_PROJECT=YOUR_PROJECT_ID,ALLOWED_ORIGINS=https://glamify-xr.netlify.app
+   ```
+   (`--max-instances 1` and `--no-cpu-throttling` are needed because jobs are kept in the server's memory while the AI works.)
+3. In the Google Cloud console open **Cloud Run > glamify-ai > Security** and note its **service account**. Then open **IAM**, find that account and give it the role **Vertex AI User**.
+4. Copy the service address that Cloud Run prints (it looks like `https://glamify-ai-xxxx.a.run.app`).
+5. In **Netlify > Site settings > Environment variables** add `VITE_TRYON_API_URL` = that address, then **Deploys > Trigger deploy**. (For local testing, put it in a file named `.env` in the project root; see `.env.example`.)
+6. Open the site, Try It On, tab **AI Photo**. It should now say the form is ready. Try one outfit.
+
+Test the server code on your computer (no Google account needed, it uses a pretend Google): `cd server` then `npm test`.
+
+### Privacy
+Photos are held in server memory only while the job runs, never saved to disk or logged. A result is deleted after it is delivered, or after 10 minutes. The request is refused unless consent was given. Google processes the photos under its own terms, which the consent text says.

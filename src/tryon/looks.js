@@ -5,9 +5,9 @@ const read = (k) => { try { return JSON.parse(localStorage.getItem(k)) || [] } c
 const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true } catch { return false } }
 
 export const getLooks = () => read(LOOKS)
-export function saveLook(state, thumb) {
+export function saveLook(state, thumb, label) {
   const looks = getLooks(), n = (looks.reduce((m, l) => Math.max(m, l.n || 0), 0)) + 1
-  const look = { id: 'l' + Date.now(), n, name: 'Look ' + n, ts: Date.now(), state: JSON.parse(JSON.stringify(state)), thumb: thumb || null }
+  const look = { id: 'l' + Date.now(), n, name: (label || 'Look') + ' ' + n, ts: Date.now(), state: JSON.parse(JSON.stringify(state)), thumb: thumb || null }
   looks.unshift(look)
   return write(LOOKS, looks.slice(0, MAX)) ? look : null // null = the browser refused to store it
 }
