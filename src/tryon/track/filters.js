@@ -33,7 +33,7 @@ export class PointSetFilter {
     const n = pts.length, s = scale || 1
     if (!this.f || this.f.length !== n * 3) {
       this.f = Array.from({ length: n * 3 }, () => new OneEuro(this.p.minCutoff, this.p.beta, this.p.dCutoff))
-      this.out = pts.map((q) => ({ x: q.x, y: q.y, z: q.z || 0 }))
+      this.out = pts.map((q) => (q.v !== undefined ? { x: q.x, y: q.y, z: q.z || 0, v: q.v } : { x: q.x, y: q.y, z: q.z || 0 }))
       return this.out.map((q) => ({ ...q }))
     }
     const out = this.out

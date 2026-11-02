@@ -53,15 +53,15 @@ export function initStudio(hooks = {}) {
   const state = {}
   const phone = matchMedia('(pointer:coarse)').matches || Math.min(screen.width, screen.height) < 700
   let tracker = null, trackerTried = false, raf = 0, running = false, tab = 'makeup', sel = null, compare = false, dirty = true
-  let lastOpener = null, M = null, customImg = null, customNote = 'Your photo stays on this device. It is not uploaded.'
+  let note = '', lastOpener = null, M = null, customImg = null, customNote = 'Your photo stays on this device. It is not uploaded.'
   // Extra models (body pose, hands, hair segmentation) are downloaded only when a product that needs them is applied.
   const EXTRA = { pose: { make: createPoseTracker, name: 'Body' }, hand: { make: createHandTracker, name: 'Hand' }, seg: { make: createSegmenter, name: 'Hair' } }
   const models = {}
   function ensure(k) {
     const m = (models[k] ||= { t: null, busy: false, n: 0, ms: 0, failedAt: 0 })
     if (m.t || m.busy || (m.failedAt && performance.now() - m.failedAt < 8000)) return m
-    m.busy = true; say(`Loading ${EXTRA[k].name.toLowerCase()} tracking...`)
-    EXTRA[k].make().then((t) => { m.t = t; say('') }).catch(() => { m.failedAt = performance.now(); say(`${EXTRA[k].name} tracking could not load. Check your internet connection.`); setTimeout(() => say(''), 3500) }).finally(() => { m.busy = false })
+    m.busy = true; note = `Loading ${EXTRA[k].name.toLowerCase()} tracking...` // small note, does not cover the camera view
+    EXTRA[k].make().then((t) => { m.t = t; note = '' }).catch(() => { m.failedAt = performance.now(); note = ''; say(`${EXTRA[k].name} tracking could not load. Check your internet connection.`); setTimeout(() => say(''), 3500) }).finally(() => { m.busy = false })
     return m
   }
   const needs = () => { const n = new Set(); Object.keys(state).forEach((id) => { const p = findProduct(id); if (p) needOf(p).split('+').forEach((k) => n.add(k)) }); return n }
@@ -126,6 +126,22 @@ export function initStudio(hooks = {}) {
   function restoreFace(c, M) { // put the real face back on top of clothes drawn over it (soft edge, no hard cut line)
     c.save(); c.beginPath(); FACE_OVAL.forEach((i, k) => (k ? c.lineTo(M.P[i].x, M.P[i].y) : c.moveTo(M.P[i].x, M.P[i].y))); c.closePath(); c.clip(); c.drawImage(raw, 0, 0); c.restore()
   }
+  // the real hand, cut from the camera picture along the tracked fingers and palm, drawn back over face items and clothes
+  const handCv = document.createElement('canvas')
+  function restoreHands(c, w) {
+    if (handCv.width !== c.canvas.width || handCv.height !== c.canvas.height) { handCv.width = c.canvas.width; handCv.height = c.canvas.height }
+    const x = handCv.getContext('2d'); x.clearRect(0, 0, handCv.width, handCv.height)
+    const X = (p) => (cam.mirror ? w - p.x : p.x)
+    hands.forEach((hd) => {
+      const P = hd.P, fw = Math.hypot(P[5].x - P[9].x, P[5].y - P[9].y) * 1.15
+      x.save(); x.globalAlpha = hd.alpha; x.filter = 'blur(1.5px)'; x.fillStyle = x.strokeStyle = '#000'; x.lineCap = x.lineJoin = 'round'
+      x.beginPath(); [0, 1, 5, 9, 13, 17].forEach((i, k) => (k ? x.lineTo(X(P[i]), P[i].y) : x.moveTo(X(P[i]), P[i].y))); x.closePath(); x.fill(); x.lineWidth = fw; x.stroke()
+      ;[[0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]].forEach((ch, f) => { x.lineWidth = fw * (f === 4 ? 0.8 : 0.95); x.beginPath(); ch.forEach((i, k) => (k ? x.lineTo(X(P[i]), P[i].y) : x.moveTo(X(P[i]), P[i].y))); x.stroke() })
+      x.restore()
+    })
+    x.globalCompositeOperation = 'source-in'; x.drawImage(raw, 0, 0); x.globalCompositeOperation = 'source-over'
+    c.drawImage(handCv, 0, 0)
+  }
   const say = (t) => { msg.textContent = t || ''; msg.hidden = !t }
   const btn = (a) => $(`[data-a="${a}"]`)
 
@@ -178,7 +194,10 @@ export function initStudio(hooks = {}) {
       lastVT = vid.currentTime; frameNo++; stat.camN++
       if (now - stat.fpsT >= 1000) { stat.cam = stat.camN; stat.camN = 0; stat.fpsT = now }
       rctx.save(); if (cam.mirror) { rctx.translate(w, 0); rctx.scale(-1, 1) } rctx.drawImage(vid, 0, 0, w, h); rctx.restore()
-      ;['pose', 'hand', 'seg'].forEach((k) => need.has(k) && ensure(k))
+      // hands are also tracked (computers only, every 2nd frame) when face items are on, so a hand passing in front of the
+      // face hides the makeup / earrings / necklace behind it instead of having them painted on top of the hand
+      if (!phone && need.has('face') && Object.keys(state).some((id) => ['makeup', 'jewellery'].includes(categoryOf(id)))) need.add('handOcc')
+      ;['pose', 'hand', 'seg'].forEach((k) => (need.has(k) || (k === 'hand' && need.has('handOcc'))) && ensure(k))
       // all models analyse the SAME frame that is drawn below
       if (tracker && need.has('face')) {
         const t0 = performance.now(); let lm = null
@@ -187,21 +206,29 @@ export function initStudio(hooks = {}) {
         M = head.update(lm, w, h, cam.mirror, now)
       } else if (!need.has('face')) M = null
       for (const k of ['hand', 'pose', 'seg']) {
-        const m = models[k]; if (!need.has(k) || !m?.t) continue
+        const m = models[k]; if (!(need.has(k) || (k === 'hand' && need.has('handOcc'))) || !m?.t) continue
+        if (k === 'hand' && !need.has('hand') && frameNo % 2) continue
         if (frameNo % every(k, need) && !(k === 'pose' && !pose)) continue
         const t0 = performance.now()
         try { if (k === 'hand') updateHands(now, w, h); else if (k === 'pose') updatePose(now, w, h); else updateSeg(now) } catch { /* try again next frame */ }
         stat.ms[k] = stat.ms[k] * 0.9 + (performance.now() - t0) * 0.1
       }
-      if (!need.has('hand')) hands = []
+      if (!need.has('hand') && !need.has('handOcc')) hands = []
     }
     dirty = false
     fctx.drawImage(raw, 0, 0)
     // draw, back to front: hair colour, your clothing photo, the real face on top of it, face items (makeup, jewellery), nails
     if (need.has('seg')) drawHairColour(fctx, hairMask, hairTint, state, w, h, raw)
-    const B = need.has('pose') ? bodyFrom(pose) : null
+    let B = need.has('pose') ? bodyFrom(pose) : null
+    // cross-check the body model against the face: shoulders must be below the chin and about 1.5 to 4.5 face widths apart.
+    // A reading that fails (e.g. a close-up with the shoulders out of the picture) is not used, so nothing is drawn on the head.
+    if (B && M && M.alpha > 0.5) {
+      const ch = M.P[152], below = -((B.mid.x - ch.x) * M.up.x + (B.mid.y - ch.y) * M.up.y), ratio = B.sw / M.fw3
+      stat.bodyCheck = [+below.toFixed(0), +(M.fh * 0.15).toFixed(0), +ratio.toFixed(2)]
+      if (below < M.fh * 0.15 || ratio < 1.5 || ratio > 4.5) { B = null; stat.bodyRejected = (stat.bodyRejected || 0) + 1 }
+    }
     const outfitOn = Object.keys(state).some((id) => OUTFIT_IDS.has(id))
-    if (outfitOn && B) { fctx.save(); fctx.globalAlpha = posePresence.a; drawOutfit(fctx, B, state, customImg, t, raw, pose); fctx.restore(); if (M) restoreFace(fctx, M) }
+    if (outfitOn && B) { fctx.save(); fctx.globalAlpha = posePresence.a; drawOutfit(fctx, B, state, customImg, t, raw, pose, M); fctx.restore(); if (M) restoreFace(fctx, M) }
     if (M) {
       // face items fade together with tracking presence (no sudden pop in or out); a short miss keeps the last position
       const target = M.alpha < 0.999 ? lctx : fctx
@@ -211,15 +238,16 @@ export function initStudio(hooks = {}) {
       drawJewellery(target, M, state, t)
       if (target === lctx) { fctx.save(); fctx.globalAlpha = M.alpha; fctx.drawImage(lay, 0, 0); fctx.restore() }
     }
+    if (hands.length && (need.has('handOcc') || outfitOn)) restoreHands(fctx, w)
     if (need.has('hand')) drawNails(fctx, hands, state, t, raw, cam.mirror)
     // guidance
-    const hm = need.has('face') && tracker && !M ? 'Looking for your face... move into the frame'
-      : outfitOn && models.pose?.t && !B ? 'Step back a little so your shoulders are in the frame'
-      : need.has('hand') && models.hand?.t && !hands.length ? 'Show your hand to the camera, back of the hand facing you' : ''
+    const hm = note ? note : need.has('face') && tracker && !M ? 'Looking for your face... move into the frame'
+      : tab === 'outfits' && outfitOn && models.pose?.t && !B ? 'Step back a little so your shoulders are in the frame'
+      : tab === 'nails' && need.has('hand') && models.hand?.t && !hands.length ? 'Show your hand to the camera, back of the hand facing you' : ''
     if (hint.textContent !== hm) hint.textContent = hm
     hint.hidden = !hm
     octx.drawImage(fin, 0, 0)
-    if (debug) { drawDebug(w, h, need); window.__glamify = { frames: frameNo, faceMissed: head.misses, faceRejected: head.rejects, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), hands: hands.length, pose: !!pose, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
+    if (debug) { drawDebug(w, h, need); window.__glamify = { frames: frameNo, faceMissed: head.misses, faceRejected: head.rejects, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
     if (compare) {
       const x = (w * split.value) / 100
       octx.save(); octx.beginPath(); octx.rect(0, 0, x, h); octx.clip(); octx.drawImage(raw, 0, 0); octx.restore()

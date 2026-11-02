@@ -1,4 +1,7 @@
-# Testing report (Update 6)
+# Testing report (Update 6 + 6.1)
+
+**6.1:** your screen recording was analysed frame by frame; garment cut-out tested on all 7 garment photos you sent; garment fit on your full-body model photo; hand-in-front-of-necklace occlusion; makeup look re-rendered. See FIX-REPORT.md section 6.1.
+
 
 ## Environment
 - Headless Chromium (Playwright), software rendering, MediaPipe Tasks Vision 0.10.17 (the version the site uses).

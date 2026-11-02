@@ -9,11 +9,11 @@ const BIG = 6000
 const sh = (n, c, m) => ({ n, c, m })
 
 export const MAKEUP = [
-  { id: 'primer', label: 'Primer', v: 0.6, shades: [sh('Smoothing', '#ffffff')] },
-  { id: 'foundation', label: 'Foundation', v: 0.55, shades: [sh('Fair', '#F3D2B8'), sh('Light', '#E6B999'), sh('Medium', '#CF9A76'), sh('Tan', '#B07A55'), sh('Deep', '#7C4B30')] },
+  { id: 'primer', label: 'Primer', v: 0.5, shades: [sh('Smoothing', '#ffffff')] },
+  { id: 'foundation', label: 'Foundation', v: 0.45, shades: [sh('Fair', '#F3D2B8'), sh('Light', '#E6B999'), sh('Medium', '#CF9A76'), sh('Tan', '#B07A55'), sh('Deep', '#7C4B30')] },
   { id: 'concealer', label: 'Concealer', v: 0.6, shades: [sh('Light', '#F6D9C0'), sh('Medium', '#E7B999'), sh('Deep', '#BF8A67')] },
-  { id: 'blush', label: 'Blush', v: 0.5, shades: [sh('Rose', '#E8758A'), sh('Peach', '#F2A084'), sh('Berry', '#B8466A'), sh('Coral', '#F26B5B'), sh('Mauve', '#B97A95')] },
-  { id: 'eyeshadow', label: 'Eyeshadow', v: 0.6, shades: [sh('Nude', '#C9A58A', 'multiply'), sh('Pink', '#E39AAE', 'multiply'), sh('Brown', '#7A4B33', 'multiply'), sh('Golden', '#D4A62F', 'source-over'), sh('Purple', '#7C4DA0', 'multiply'), sh('Peach', '#F0A98B', 'multiply'), sh('Smokey', '#2B2530', 'multiply'), sh('Shimmer', '#EBD9C0', 'source-over')] },
+  { id: 'blush', label: 'Blush', v: 0.45, shades: [sh('Rose', '#E8758A'), sh('Peach', '#F2A084'), sh('Berry', '#B8466A'), sh('Coral', '#F26B5B'), sh('Mauve', '#B97A95')] },
+  { id: 'eyeshadow', label: 'Eyeshadow', v: 0.45, shades: [sh('Nude', '#C9A58A', 'multiply'), sh('Pink', '#E39AAE', 'multiply'), sh('Brown', '#7A4B33', 'multiply'), sh('Golden', '#D4A62F', 'source-over'), sh('Purple', '#7C4DA0', 'multiply'), sh('Peach', '#F0A98B', 'multiply'), sh('Smokey', '#2B2530', 'multiply'), sh('Shimmer', '#EBD9C0', 'source-over')] },
   { id: 'eyeliner', label: 'Eyeliner', v: 0.9, shades: [sh('Black', '#0b0b0f'), sh('Brown', '#3a2418'), sh('Navy', '#14213d')] },
   { id: 'mascara', label: 'Mascara', v: 0.9, shades: [sh('Black', '#0b0b0f'), sh('Brown', '#3a2418')] },
   { id: 'brows', label: 'Eyebrows', v: 0.6, shades: [sh('Dark', '#2a1c16'), sh('Brown', '#4a3022'), sh('Auburn', '#6b3a22'), sh('Blonde', '#9a7a52')] },
@@ -75,19 +75,21 @@ const scratch = (W, H, k = 0) => {
 const DRAW = {
   primer(c, M, s, v, raw) { // blurs skin texture inside the face (not eyes, lips, brows)
     const { P, W, H, fw } = M
-    const [small, sx] = scratch(Math.round(W / 7), Math.round(H / 7), 0); sx.drawImage(raw, 0, 0, small.width, small.height)
+    // light smoothing only (a strong blur makes the face look smeared): 1/3 resolution, low opacity, soft mask edge
+    const [small, sx] = scratch(Math.round(W / 3), Math.round(H / 3), 0); sx.drawImage(raw, 0, 0, small.width, small.height)
     const [big, bx] = scratch(W, H, 1); bx.imageSmoothingQuality = 'high'; bx.drawImage(small, 0, 0, W, H)
     const [mask, mx] = scratch(W, H, 2)
     const holes = [...EYES.map((e) => e.loop.map((i) => P[i])), LIPS_OUT.map((i) => P[i]), ...BROWS.map((b) => [...b.up, ...b.low.slice().reverse()].map((i) => P[i]))]
-    soft(mx, [OVAL.map((i) => P[i]), ...holes], '#000', fw * 0.04, 1, 'source-over', 'evenodd')
+    soft(mx, [OVAL.map((i) => P[i]), ...holes], '#000', fw * 0.08, 1, 'source-over', 'evenodd')
     bx.globalCompositeOperation = 'destination-in'; bx.drawImage(mask, 0, 0)
-    c.save(); c.globalAlpha = v * 0.85; c.drawImage(big, 0, 0); c.restore()
+    c.save(); c.globalAlpha = v * 0.38; c.drawImage(big, 0, 0); c.restore()
   },
   foundation(c, M, s, v) {
     const { P, fw } = M
     const shapes = [OVAL.map((i) => P[i]), ...EYES.map((e) => e.loop.map((i) => P[i])), LIPS_OUT.map((i) => P[i])]
-    soft(c, shapes, s.c, fw * 0.03, v * 0.85, 'soft-light', 'evenodd')
-    soft(c, shapes, s.c, fw * 0.03, v * 0.22, 'source-over', 'evenodd')
+    // wide soft edge so there is no visible line between face and neck; mostly a tone shift (soft-light), little coverage
+    soft(c, shapes, s.c, fw * 0.09, v * 0.55, 'soft-light', 'evenodd')
+    soft(c, shapes, s.c, fw * 0.09, v * 0.1, 'source-over', 'evenodd')
   },
   concealer(c, M, s, v) {
     const { P, up, roll } = M
@@ -99,11 +101,13 @@ const DRAW = {
   },
   blush(c, M, s, v) {
     const { P, fw, roll } = M
-    ;[[205, 234, -1], [425, 454, 1]].forEach(([a, b, side]) => {
-      const ctr = lerp(P[a], P[b], 0.22), r = fw * 0.12, k = sideVis(M, side)
-      if (k < 0.02) return
-      soft(c, [ell(ctr, r, r * 0.78, roll)], s.c, r * 0.9, v * 0.65 * k, 'multiply')
-      soft(c, [ell(ctr, r, r * 0.78, roll)], s.c, r * 0.9, v * 0.4 * k, 'soft-light')
+    // a soft oval swept from the apple of the cheek (50 / 280) up along the cheekbone (116 / 345), not a round disc
+    ;[[50, 116, -1], [280, 345, 1]].forEach(([a, b, side]) => {
+      const k = sideVis(M, side); if (k < 0.02) return
+      const A = P[a], Bp = P[b], ctr = lerp(A, Bp, 0.4), len = d(A, Bp), ang = Math.atan2(Bp.y - A.y, Bp.x - A.x)
+      const rx = len * 0.75 + fw * 0.02, ry = rx * 0.5
+      soft(c, [ell(ctr, rx, ry, ang)], s.c, rx * 1.1, v * 0.5 * k, 'multiply')
+      soft(c, [ell(ctr, rx, ry, ang)], s.c, rx * 1.1, v * 0.4 * k, 'soft-light')
     })
   },
   highlighter(c, M, s, v) {
@@ -128,24 +132,30 @@ const DRAW = {
     EYES.forEach((e) => {
       const w = d(P[e.out], P[e.inn]), top = e.up.map((i) => P[i])
       const dir = norm({ x: P[e.out].x - P[e.inn].x, y: P[e.out].y - P[e.inn].y })
-      const wing = add(P[e.out], norm({ x: dir.x * 0.9 + up.x * 0.45, y: dir.y * 0.9 + up.y * 0.45 }), w * 0.3)
-      softLine(c, [wing, ...top], s.c, Math.max(1.5, w * 0.075), 0.8, v)
+      // tapered liner hugging the lash line: thin at the inner corner, thicker toward the outer corner, short flick
+      const n = top.length, th = (k) => Math.max(0.8, w * 0.05 * (0.25 + 0.75 * (1 - k / (n - 1))))
+      const upper = top.map((p, k) => add(p, up, th(k)))
+      const wing = add(P[e.out], norm({ x: dir.x * 0.85 + up.x * 0.5, y: dir.y * 0.85 + up.y * 0.5 }), w * 0.16)
+      soft(c, [[wing, ...upper.slice(1), ...top.slice().reverse().slice(0, -1), P[e.out]]], s.c, Math.max(0.8, w * 0.012), v * 0.92)
     })
   },
   mascara(c, M, s, v) {
+    // mascara mostly DARKENS and thickens the real lash line; only a few fine, short, curved lashes are added on top
+    // (long drawn spikes look like a cartoon)
     const { P, up } = M
-    c.save(); c.globalAlpha = v; c.strokeStyle = s.c; c.lineCap = 'round'
     EYES.forEach((e) => {
-      const w = d(P[e.out], P[e.inn]), top = e.up.map((i) => P[i]), mid = lerp(top[0], top[top.length - 1], 0.5)
-      c.lineWidth = Math.max(1, w * 0.028); c.beginPath()
-      top.forEach((p, k) => {
-        if (k === 0 || k === top.length - 1) return
-        const out = norm({ x: (p.x - mid.x) * 0.5 + up.x, y: (p.y - mid.y) * 0.5 + up.y }), len = w * (0.12 + 0.12 * Math.sin((k / (top.length - 1)) * Math.PI))
-        c.moveTo(p.x, p.y); c.lineTo(p.x + out.x * len, p.y + out.y * len)
-      })
-      c.stroke()
+      const w = d(P[e.out], P[e.inn]), top = e.up.map((i) => P[i])
+      softLine(c, top, s.c, Math.max(1, w * 0.035), Math.max(1, w * 0.02), v * 0.55)
+      c.save(); c.globalAlpha = v * 0.45; c.strokeStyle = s.c; c.lineCap = 'round'; c.lineWidth = Math.max(0.6, w * 0.009)
+      const outer = norm({ x: P[e.out].x - P[e.inn].x, y: P[e.out].y - P[e.inn].y })
+      c.beginPath()
+      for (let k = 1; k <= 26; k++) {
+        const t = k / 27, p = along(top, t), len = w * (0.05 + 0.05 * Math.sin(t * Math.PI)) * (0.8 + 0.4 * ((k * 7919) % 5) / 5)
+        const dir = norm({ x: up.x + outer.x * (t - 0.35) * 0.9, y: up.y + outer.y * (t - 0.35) * 0.9 })
+        c.moveTo(p.x, p.y); c.quadraticCurveTo(p.x + dir.x * len * 0.6, p.y + dir.y * len * 0.6, p.x + (dir.x + outer.x * 0.25) * len, p.y + (dir.y + outer.y * 0.25) * len)
+      }
+      c.stroke(); c.restore()
     })
-    c.restore()
   },
   brows(c, M, s, v) {
     const { P, fw } = M
