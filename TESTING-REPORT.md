@@ -44,3 +44,15 @@ face, hand or body, or that Google's live service accepts the requests. Real-dev
 | AI photo hairstyle (Gemini image editing) | Server and UI done, **needs your Google Cloud setup**, not run live; general image editor, no identity guarantee |
 | 3D head pose (pitch/yaw from the model's matrix) | **Not done** |
 | Shop & Try On (Amazon/Meesho/Myntra), style assistant, accounts | **Not done** |
+
+
+## Update 5 additions
+| Area | Method | Result |
+|---|---|---|
+| Ear placement | Synthetic 3D head with known ear positions, yaw -50 to 50, pitch -25 to 25, roll -15 to 15, both depth-sign conventions | Visible-ear error 0.034 to 0.075 face widths (old: 0.054 to 0.130). Hidden ears drawn: 0 of 144 (old: 64). Visible ears wrongly hidden: 0 of 252. |
+| Ear placement through the real studio | Playwright, fake camera, rotating synthetic head | 0 earring pixels on the face centre at 0, 10, 20, 30, 45, 60 degrees, while looking down, and with a wrong reading every 7th frame. Earring size stays constant (20 to 24 px) as the head turns. |
+| Makeup dropouts and glitches | Fake tracker switched off for 120 ms; wrong reading every 7th frame | No dip during the 120 ms dropout; fade to nothing after a real loss; lipstick centre moved about 2 px under glitches. The measurement is noisy because the fake camera has moving shapes. |
+| Nails perspective | Finger tilted 0, 30, 50, 65, 75 degrees toward the camera | Nail shorter but not narrower; hidden when edge-on. Judged by eye on a drawing. |
+| Smoothing profiles | Simulation at 30 fps | Makeup profile: still jitter 2.0 -> 1.5, slow-motion error 9.3 -> 10.8, fast 8.3 -> 11.2. Hands: no candidate beat the base profile, so hands keep it. |
+| Regression | Studio flow at 320x700, 390x844, 768x1024, 1366x768, 1920x1080; overlap test at 9 sizes; AI Photo flow incl. Hair tab hand-off; imports 0 problems; server 29/29 | All passed. |
+**Still not tested:** a real face, hand, body, phone, lighting or skin tone; Android Chrome; iPhone Safari; `npm run build`; live Google calls.

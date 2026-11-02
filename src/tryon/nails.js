@@ -40,16 +40,23 @@ function outline(c, shape, w, L) {
   c.closePath()
 }
 
+// polish picks up the real nail's light and shade: first multiplied into the picture, then laid on top at partial opacity
+function fillMix(c, style) {
+  const a0 = c.globalAlpha; c.save(); c.fillStyle = style
+  c.globalCompositeOperation = 'multiply'; c.globalAlpha = a0 * 0.6; c.fill()
+  c.globalCompositeOperation = 'source-over'; c.globalAlpha = a0 * 0.55; c.fill(); c.restore()
+}
+
 function paint(c, id, col, st, w, L, seed, T) {
   const hw = w / 2
   if (id === 'np-french') {
-    c.fillStyle = 'rgba(236,205,190,.55)'; c.fill()
+    fillMix(c, 'rgb(236,205,190)')
     c.save(); c.clip(); c.fillStyle = col; c.beginPath(); c.ellipse(0, L * 1.02, hw * 1.25, L * 0.3, 0, 0, Math.PI * 2); c.fill(); c.restore()
   } else if (id === 'np-ombre') {
-    const g = c.createLinearGradient(0, 0, 0, L); g.addColorStop(0, col); g.addColorStop(1, mix(col, '#ffffff', 0.85)); c.fillStyle = g; c.fill()
+    const g = c.createLinearGradient(0, 0, 0, L); g.addColorStop(0, col); g.addColorStop(1, mix(col, '#ffffff', 0.85)); fillMix(c, g)
   } else if (id === 'np-chrome') {
-    const g = c.createLinearGradient(-hw, 0, hw, L); g.addColorStop(0, mix(col, '#000000', 0.35)); g.addColorStop(0.35, mix(col, '#ffffff', 0.7)); g.addColorStop(0.6, col); g.addColorStop(1, mix(col, '#000000', 0.3)); c.fillStyle = g; c.fill()
-  } else { c.fillStyle = col; c.fill() }
+    const g = c.createLinearGradient(-hw, 0, hw, L); g.addColorStop(0, mix(col, '#000000', 0.35)); g.addColorStop(0.35, mix(col, '#ffffff', 0.7)); g.addColorStop(0.6, col); g.addColorStop(1, mix(col, '#000000', 0.3)); fillMix(c, g)
+  } else fillMix(c, col)
   if (id === 'np-glitter') { // fixed sparkle positions per nail (seeded), twinkling over time
     c.save(); c.clip(); let s = seed * 9301 + 49297
     const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280 }
@@ -75,9 +82,12 @@ export function drawNails(c, hands, state, T) {
   hands.forEach((hd, hi) => {
     if (!hd.back && st.show !== 'always') return // polish is only drawn on the back of the hand, where nails really are
     FINGERS.forEach(([t, d, wf], fi) => {
-      const A = hd.P[t], B = hd.P[d], len = Math.hypot(A.x - B.x, A.y - B.y); if (len < 4) return
+      const A = hd.P[t], B = hd.P[d], len = Math.hypot(A.x - B.x, A.y - B.y), len3 = Math.hypot(A.x - B.x, A.y - B.y, (A.z || 0) - (B.z || 0))
+      // perspective: when a finger points toward the camera its picture gets SHORTER (len) but not NARROWER, so the nail length uses the
+      // length seen in the picture and the nail width uses the true 3D length. Edge-on fingers (nail not visible) are skipped.
+      if (len < 4 || len / (len3 || 1) < 0.3) return
       const ux = (A.x - B.x) / len, uy = (A.y - B.y) / len
-      const L = len * 0.68, w = len * 0.62 * wf, ext = L * (EXTRA[st.shape] ?? 0.2)
+      const L = len * 0.68, w = len3 * 0.46 * wf, ext = L * (EXTRA[st.shape] ?? 0.2)
       const bx = A.x + ux * len * 0.06 - ux * L, by = A.y + uy * len * 0.06 - uy * L // base of the nail
       c.save(); c.globalAlpha *= alpha; c.translate(bx, by); c.rotate(Math.atan2(-ux, uy))
       outline(c, st.shape, w, L + ext)

@@ -155,14 +155,13 @@ All three are in the Try-On Studio as tabs (Hair, Outfits, Nails). Each download
 - Shapes: square, round, almond, coffin, stiletto. Finish: glossy or matte. Colour strength slider. Works on both hands.
 - Each nail follows its finger (direction, length, thickness). Polish is drawn on the **back of the hand** only; there is a "Show nails: Always" option because the palm/back detection has not been tested on real hands.
 
-**Hair**
-- *Hairstyles:* short, bob, long straight, layered, long wavy, curly, plus bangs, in 8 colours. These are **stylised 2D illustrations** anchored to your head (position, size, tilt, turn). They are NOT realistic hair replacement, and your own hair stays visible wherever the new style does not cover it. They look best if your hair is short or pulled back.
-- *Hair colours:* recolours your **real hair** using a hair-segmentation model (11 colours, intensity slider). Light and shadow of your own hair are kept.
+**Hair** (updated in Update 5)
+- Live: **hair colour** on your real hair (a hair-segmentation mask recolours it, 11 colours, intensity slider). The earlier flat live hairstyles were removed because they looked like cartoon stickers.
+- Hairstyles (short, bob, long, layered, wavy, curly, bangs) are made in the **AI Photo** tab.
 
-**Outfits**
-- T-shirt, shirt, top, dress, kurti, party dress, jacket, blazer, in 8 colours, fitted to your shoulders, torso and arms from the body model. If your hips are out of the camera frame the length is estimated.
-- **My clothing photo:** choose a photo of a garment (plain background works best). A plain background is removed automatically and the garment is placed on your shoulders. The photo stays on your device.
-- This is a **basic garment overlay**, not cloth simulation and not an AI-generated realistic try-on. Your hands and arms are not drawn in front of the garment. The structure is modular, so a realistic try-on model can be added later.
+**Outfits** (updated in Update 5)
+- Live: **My clothing photo**: your own garment photo placed on your shoulders and torso (plain background removed automatically; Move up/down and Length sliders). It is NOT an AI try-on and not bent around your body. The earlier flat drawn garments were removed.
+- Realistic outfits: **AI Photo** tab.
 
 **Tested:** the studio running in a real browser with a fake camera and *simulated* tracking data (all three features applied together, saved as a look, at 8 screen sizes, no errors), plus drawing checks on synthetic head, body and hand shapes.
 **Not tested:** the real hand, body and hair-segmentation models (they need internet and a real person), real-hand palm/back detection, and any iPhone/iPad/Android hardware. The model files are loaded from Google's public MediaPipe storage; if they fail to load the studio shows a message and everything else keeps working.
@@ -203,3 +202,9 @@ Test the server code on your computer (no Google account needed, it uses a prete
 
 ### Privacy
 Photos are held in server memory only while the job runs, never saved to disk or logged. A result is deleted after it is delivered, or after 10 minutes. The request is refused unless consent was given. Google processes the photos under its own terms, which the consent text says.
+
+---
+
+## J. Update 5: earrings, makeup stability, nails, honest live hair/outfits
+Read `FIX-REPORT.md` (what was fixed and what still needs external services) and `REFERENCE-PHOTOS.md` (the images that would help most).
+Everything was tested on simulated data only; please test on your phone with `?debug` and send me recordings.

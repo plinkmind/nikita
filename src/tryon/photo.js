@@ -95,5 +95,5 @@ export function initPhoto(box, hooks = {}) {
     if (e.target.matches('[data-ph-consent]')) { S.consent = e.target.checked; draw() }
     if (e.target.matches('[data-ph-colour]')) { S.colour = e.target.value }
   })
-  return { show() { if (S.health === null || S.health === 'offline') checkServer(); else draw() }, hide() { if (S.job) cancel() }, state: S }
+  return { setMode(m) { if (m !== S.mode) { S.mode = m; S.result = null; S.err = '' } }, show() { if (S.health === null || S.health === 'offline') checkServer(); else draw() }, hide() { if (S.job) cancel() }, state: S }
 }

@@ -22,12 +22,14 @@ export class OneEuro {
 // Filters a list of {x, y} points. Coordinates are divided by `scale` (for example the face width) first, so the same
 // settings work for a face close to the camera and one far away.
 export class PointSetFilter {
-  constructor(opts = {}) { this.o = { minCutoff: 1, beta: 250, dCutoff: 1, floor: 0.15, ...opts }; this.fx = []; this.fy = [] }
-  reset() { this.fx = []; this.fy = [] }
+  constructor(opts = {}) { this.o = { minCutoff: 1, beta: 250, dCutoff: 1, floor: 0.15, ...opts }; this.fx = []; this.fy = []; this.fz = [] }
+  reset() { this.fx = []; this.fy = []; this.fz = [] }
   apply(pts, tSec, scale) {
     return pts.map((p, i) => {
       const fx = (this.fx[i] ||= new OneEuro(this.o.minCutoff, this.o.beta, this.o.dCutoff, this.o.floor)), fy = (this.fy[i] ||= new OneEuro(this.o.minCutoff, this.o.beta, this.o.dCutoff, this.o.floor))
-      return { ...p, x: fx.filter(p.x / scale, tSec) * scale, y: fy.filter(p.y / scale, tSec) * scale }
+      const o = { ...p, x: fx.filter(p.x / scale, tSec) * scale, y: fy.filter(p.y / scale, tSec) * scale }
+      if (p.z !== undefined) { const fz = (this.fz[i] ||= new OneEuro(this.o.minCutoff, this.o.beta, this.o.dCutoff, this.o.floor)); o.z = fz.filter(p.z / scale, tSec) * scale } // depth is filtered too
+      return o
     })
   }
 }

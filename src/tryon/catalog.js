@@ -12,11 +12,8 @@ import { OUTFITS } from './outfit.js'
 export const needOf = (p) => p.need || (['necklace', 'chain', 'pendant'].includes(p.id) ? 'face+pose' : 'face')
 export const CATEGORIES = {
   makeup: { label: 'Makeup', products: MAKEUP, groups: [{ name: 'Makeup products', ids: MAKEUP.map((p) => p.id) }] },
-  hair: { label: 'Hair', products: HAIR, groups: [{ name: 'Hairstyles', ids: ['h-short', 'h-bob', 'h-long', 'h-layers', 'h-wavy', 'h-curly', 'h-bangs'] }, { name: 'Hair colours', ids: ['haircolor'] }] },
-  outfits: {
-    label: 'Outfits', products: OUTFITS,
-    groups: [{ name: 'Tops', ids: ['o-tee', 'o-shirt', 'o-top'] }, { name: 'Dresses & kurtis', ids: ['o-dress', 'o-kurti', 'o-party'] }, { name: 'Jackets & blazers', ids: ['o-jacket', 'o-blazer'] }, { name: 'Your own clothing', ids: ['o-custom'] }],
-  },
+  hair: { label: 'Hair', products: HAIR, groups: [{ name: 'Hair colours (your real hair)', ids: ['haircolor'] }], note: { text: 'Hairstyles (short, bob, long, curly...) are made by AI from a photo, because a live overlay cannot look like real hair.', mode: 'hair', button: 'Try hairstyles with AI Photo' } },
+  outfits: { label: 'Outfits', products: OUTFITS, groups: [{ name: 'Your own clothing', ids: ['o-custom'] }], note: { text: 'For a realistic outfit try-on, use an AI-generated result. The live preview below only places your own garment photo on your body.', mode: 'outfit', button: 'Try outfits with AI Photo' } },
   nails: { label: 'Nails', products: NAILS, groups: [{ name: 'Nail polish', ids: ['np-nude', 'np-pink', 'np-red', 'np-dark'] }, { name: 'Designs', ids: ['np-french', 'np-glitter', 'np-ombre', 'np-chrome'] }] },
   jewellery: {
     label: 'Jewellery', products: JEWELLERY,

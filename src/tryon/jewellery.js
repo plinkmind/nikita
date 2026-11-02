@@ -1,3 +1,4 @@
+import { earAnchors } from './headpose.js'
 // Jewellery renderer: drawn as metal + gems, anchored to face landmarks and head roll / turn.
 const sh = (n, c) => ({ n, c })
 const METALS = [sh('Gold', '#E2BE7C'), sh('Rose gold', '#E0A596'), sh('Silver', '#D5DAE3')]
@@ -33,15 +34,19 @@ const quad = (a, b, k, t) => ({ x: (1 - t) * (1 - t) * a.x + 2 * (1 - t) * t * k
 // draw in local coordinates: origin at (x,y), rotated with the head
 const at = (c, x, y, rot, fn) => { c.save(); c.translate(x, y); c.rotate(rot); fn(); c.restore() }
 
-// Ears are not part of the face mesh. The mesh edge points 234 / 454 sit at ear level on the outline of the face, so the
-// earlobe is found by moving OUTWARD along the head's own left-right axis and DOWN along the head's own up axis.
-// Both directions come from the tracked landmarks, so the earring follows head tilt and turn, and nothing is a fixed screen position.
-const clamp01 = (v) => Math.max(0, Math.min(1, v))
-const EARS = (M) => [[234, 454], [454, 234]].map(([e, o]) => {
-  const P = M.P, d = { x: P[e].x - P[o].x, y: P[e].y - P[o].y }, l = Math.hypot(d.x, d.y) || 1
-  const lobe = { x: P[e].x + (d.x / l) * M.fw * 0.045 - M.up.x * M.fh * 0.15, y: P[e].y + (d.y / l) * M.fw * 0.045 - M.up.y * M.fh * 0.15 }
-  const sx = Math.sign(P[e].x - P[1].x) || 1
-  return { lobe, sx, vis: clamp01((0.2 - sx * M.yaw) / 0.1) } // the ear on the far side of a turned head fades out instead of popping
+// Ears are not part of the face mesh, so they are placed in 3D (see headpose.js): outside, below and behind the cheek points, along the
+// head's own axes, so they follow turning and nodding. An ear hidden by the turned head is NOT drawn (never moved to another landmark).
+// Earrings hang under gravity: they do not tilt with the head, they only swing a little when the head moves.
+const swing = { '-1': { a: 0, v: 0, x: null, t: 0, vis: 0 }, '1': { a: 0, v: 0, x: null, t: 0, vis: 0 } }
+export function resetJewellery() { Object.values(swing).forEach((s) => Object.assign(s, { a: 0, v: 0, x: null, vis: 0 })) }
+const EARS = (M, T) => earAnchors(M.frame).map((e) => {
+  const s = swing[e.side], dt = Math.min(0.05, Math.max(0.001, T - s.t))
+  const vx = s.x === null ? 0 : (e.x - s.x) / Math.max(0.001, T - s.t)
+  const target = Math.max(-0.45, Math.min(0.45, vx / (M.fw * 6))) * 0.6 // lean away from the direction of motion
+  s.v += (-120 * (s.a - target) - 9 * s.v) * dt; s.a += s.v * dt // damped spring: returns to hanging straight down
+  s.x = e.x; s.t = T
+  s.vis += (e.vis - s.vis) * (1 - Math.exp(-dt * 14)) // smooth fade, so the earring never blinks at the edge of visibility
+  return { lobe: { x: e.x, y: e.y }, swing: s.a, vis: s.vis }
 })
 
 const ear = {
@@ -72,7 +77,7 @@ const ear = {
 
 const nose = (c, M, id, col, u, T) => {
   const P = M.P, a = P[129], sx = Math.sign(a.x - P[1].x) || 1
-  if (sx * M.yaw > 0.16) return
+  if (sx * M.yaw > 0.3) return // the far nostril is hidden once the head is turned
   at(c, a.x + sx * u * 0.004, a.y + u * 0.006, M.roll, () => {
     if (id === 'nosepin') bezel(c, col, 0, 0, u * 0.011, T)
     else { c.beginPath(); c.arc(sx * u * 0.012, u * 0.022, u * 0.032, -Math.PI * 0.45, Math.PI * 1.25); c.lineWidth = u * 0.009; c.strokeStyle = metal(c, col, u * 0.05); c.stroke() }
@@ -127,13 +132,13 @@ function tiara(c, M, col, u, T) {
 
 export function drawJewellery(c, M, state, T) {
   const col = (id) => JEWELLERY.find((j) => j.id === id).shades[state[id].shade].c
-  const U = (id) => M.fw * (0.6 + state[id].v * 0.8)
+  const U = (id) => (M.fw3 || M.fw) * (0.6 + state[id].v * 0.8) // sized from the true head width, so jewellery keeps its size when the head turns
   if (state.tiara) tiara(c, M, col('tiara'), U('tiara'), T)
   ;['necklace', 'chain', 'pendant'].forEach((id) => { if (state[id]) neck(c, M, id, col(id), U(id), T) })
-  const ears = EARS(M)
+  const ears = EARS(M, T)
   ;['studs', 'earrings', 'hoops', 'jhumkas'].forEach((id) => {
     if (!state[id]) return
-    ears.forEach((e) => { if (e.vis > 0) { c.save(); c.globalAlpha *= e.vis; at(c, e.lobe.x, e.lobe.y, M.roll, () => ear[id](c, U(id), col(id), T, M)); c.restore() } })
+    ears.forEach((e) => { if (e.vis > 0) { c.save(); c.globalAlpha *= e.vis; at(c, e.lobe.x, e.lobe.y, e.swing, () => ear[id](c, U(id), col(id), T, M)); c.restore() } })
   })
   ;['nosering', 'nosepin'].forEach((id) => { if (state[id]) nose(c, M, id, col(id), U(id), T) })
 }

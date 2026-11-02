@@ -3,6 +3,7 @@
 
 const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm'
 import { PointSetFilter } from './filters.js'
+import { headFrame } from './headpose.js'
 
 const MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
 
@@ -11,33 +12,45 @@ export async function createTracker() {
   const files = await FilesetResolver.forVisionTasks(WASM)
   const make = (delegate) => FaceLandmarker.createFromOptions(files, {
     baseOptions: { modelAssetPath: MODEL, delegate }, runningMode: 'VIDEO', numFaces: 1,
-    minFaceDetectionConfidence: 0.5, minTrackingConfidence: 0.5,
+    minFaceDetectionConfidence: 0.4, minFacePresenceConfidence: 0.3, minTrackingConfidence: 0.3, // lower = the model gives up on a moving face less often (fewer blinks)
   })
   try { return await make('GPU') } catch { return await make('CPU') }
 }
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
 
-export class Face {
-  constructor() { this.P = null; this.filter = new PointSetFilter() }
-  reset() { this.P = null; this.filter.reset() }
+// Different features need different smoothing: anchors for jewellery use the base profile; makeup edges (lips, eyes) use a calmer one.
+const PROFILES = { base: { minCutoff: 1, beta: 250, dCutoff: 1, floor: 0.15 }, calm: { minCutoff: 0.6, beta: 300, dCutoff: 1, floor: 0.2 } }
 
-  // lm: 478 normalized landmarks from ONE new camera frame. tSec = when that frame was analysed (seconds).
-  // Returns pixel points (smoothed with a One Euro filter on real timestamps) plus pose measurements.
+export class Face {
+  constructor() { this.P = null; this.filter = new PointSetFilter(PROFILES.base); this.calm = new PointSetFilter(PROFILES.calm); this.rejects = 0; this.streak = 0 }
+  reset() { this.P = null; this.filter.reset(); this.calm.reset(); this.streak = 0 }
+
+  // lm: 478 landmarks (x, y, depth z) from ONE new camera frame. tSec = when it was analysed. Returns null if the reading is an obvious glitch.
   update(lm, W, H, mirror, tSec = performance.now() / 1000) {
     let inside = 0
-    const raw = lm.map((q) => { if (q.x >= 0 && q.x <= 1 && q.y >= 0 && q.y <= 1) inside++; return { x: (mirror ? 1 - q.x : q.x) * W, y: q.y * H } })
-    const P = (this.P = this.filter.apply(raw, tSec, this.fw || W * 0.3))
+    const raw = lm.map((q) => { if (q.x >= 0 && q.x <= 1 && q.y >= 0 && q.y <= 1) inside++; return { x: (mirror ? 1 - q.x : q.x) * W, y: q.y * H, z: (q.z || 0) * W } }) // depth uses the same scale as x
+    const finite = raw[1] && Number.isFinite(raw[1].x + raw[1].y + raw[10].x + raw[152].y + raw[234].x + raw[454].x)
+    if (!finite) { this.rejects++; return null }
+    if (this.P && this.fw) { // glitch guard: a head cannot jump more than ~0.8 face widths or change size by 40% between two camera pictures
+      const prev = { x: (this.P[234].x + this.P[454].x) / 2, y: (this.P[234].y + this.P[454].y) / 2 }, cur = { x: (raw[234].x + raw[454].x) / 2, y: (raw[234].y + raw[454].y) / 2 }
+      const jump = Math.hypot(cur.x - prev.x, cur.y - prev.y) / this.fw, ratio = dist(raw[234], raw[454]) / this.fw
+      if ((jump > 0.8 || ratio > 1.6 || ratio < 0.55) && this.streak < 3) { this.streak++; this.rejects++; return null } // after 3 in a row it is real movement
+    }
+    this.streak = 0
+    const P = (this.P = this.filter.apply(raw, tSec, this.fw || W * 0.3)), Pm = this.calm.apply(raw, tSec, this.fw || W * 0.3)
     const fw = dist(P[234], P[454]), fh = dist(P[10], P[152])
     const d = { x: P[10].x - P[152].x, y: P[10].y - P[152].y }, l = Math.hypot(d.x, d.y) || 1
     let a = P[33], b = P[263]; if (a.x > b.x) [a, b] = [b, a]
     this.fw = fw
+    const frame = headFrame(P)
     return {
-      P, W, H, fw, fh,
+      P, Pm, W, H, fw, fh, frame, fw3: frame.a * 2, // fw3 = true head width (does not shrink when the head turns)
       up: { x: d.x / l, y: d.y / l },
       roll: Math.atan2(b.y - a.y, b.x - a.x),
-      yaw: (P[1].x - (P[234].x + P[454].x) / 2) / fw, // about -0.3 (turned left) to 0.3 (turned right)
-      inFrame: inside / lm.length, // 1 = whole face inside the camera picture; low = partly out of frame
+      yaw: frame.turn, // real turn from the 3D head frame: about -1..1 (0 = straight, 0.5 = about 30 degrees)
+      nod: frame.nod,  // up/down
+      inFrame: inside / lm.length,
     }
   }
 }
