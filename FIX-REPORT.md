@@ -1,3 +1,27 @@
+# Update 8: free AI try-on + live tracking speed fixes
+- **Free mode** for "See It On You" (no key, no cost): public IDM-VTON demo on Hugging Face, called from the visitor's browser.
+  Limits: shared queue, small daily quota per visitor, upper-body garments best, **non-commercial licence**. Paid FASHN is used
+  automatically when `FASHN_API_KEY` is set. Details: README section N.
+- Checked options: Gemini image API has no free tier (paid only); the Kolors try-on demo has its API switched off; IDM-VTON's demo
+  exposes a public API. Tested against an exact local copy of its interface (36/36 browser checks, plus the "not reachable" path).
+- **Live tracking:** exact new-frame detection (frame callback), automatic load saving, hand occlusion only for confirmed hands,
+  richer `?debug`. Regression-tested: earrings, lipstick and nails still track in the studio tests.
+
+---
+
+# Update 7: "See It On You" AI virtual outfit try-on (photo based)
+New separate experience (header button **See It On You** and a button on the last chapter); the live camera mirror is unchanged.
+Model: **FASHN tryon-v1.6** through the site's own Netlify Function (key stays on the server). Setup: README section M.
+
+Tested here (README M "Test it locally"): the real built site + the real function code, with FASHN replaced by a local mock
+(no key and no access to FASHN from this environment), in headless Chromium at 1440x900, 820x1180 and 390x844:
+38/38 checks pass: open, health check, rejects non-images and too-small images, previews, consent gate, clothing type sent,
+real stage + elapsed time while waiting, result shown, before/after drag, download, try another outfit, start over, no sideways
+scrolling, and the honest "not switched on" state without a key. Backend: 15/15 (`tests/functions.test.mjs`).
+**Not tested:** a real FASHN generation (needs your key). Your first real try is the live test.
+
+---
+
 # Update 6.1: fixes from your screen recording (2 Nov)
 
 I went through your 2 min 44 s recording frame by frame. What it showed, why, and what changed:

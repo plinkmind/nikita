@@ -111,7 +111,7 @@ scene.add(new THREE.Points(dustGeo, dustMat))
 /* ---------- html overlay ---------- */
 const FINALE = `
   <div class="sw" id="sw">${ACCENTS.map((a, i) => `<button type="button" data-c="${a.c}" style="background:${a.c}" class="${i ? '' : 'on'}" aria-label="${a.n}" title="${a.n}"></button>`).join('')}</div>
-  <button type="button" class="tryon-cta" data-tryon>Try it on now</button>
+  <div class="ctas"><button type="button" class="tryon-cta" data-tryon>Try it on live</button><button type="button" class="tryon-cta ai" data-aitryon>See it on you (AI photo)</button></div>
   <form id="demoForm"><input type="email" placeholder="Your work email" required><button type="submit">Request a demo</button></form>`
 CH.forEach((c, i) => {
   const s = document.createElement('section')
@@ -186,7 +186,7 @@ let lastCo = -1, lastHint = -1, lastDot = -1
 
 /* One animation loop only. It stops while the tab is hidden or the try-on studio is open, and restarts afterwards. */
 let rafId = 0, frames = 0, slow = 0, prevMs = 0
-const studioOpen = () => document.body.classList.contains('studio-open')
+const studioOpen = () => document.body.classList.contains('studio-open') || document.body.classList.contains('at-open')
 const startLoop = () => { if (!rafId) { prevMs = 0; rafId = requestAnimationFrame(tick) } }
 const stopLoop = () => { cancelAnimationFrame(rafId); rafId = 0 }
 const pauseVideos = () => { items.forEach((it) => it.video && !it.video.paused && it.video.pause()); if (!heroBg.paused) heroBg.pause() }
@@ -346,3 +346,11 @@ const studio = initStudio({
   onClose: () => { if (!document.hidden) startLoop() },
 })
 document.querySelectorAll('[data-tryon]').forEach((b) => b.addEventListener('click', () => studio.open()))
+
+/* ---------- "See It On You": AI photo outfit try-on (separate from the live camera studio, loaded only when opened) ---------- */
+let aiP = null
+const openAi = () => {
+  aiP ||= import('./aitryon/aitryon.js').then((m) => m.initAiTryOn({ onOpen: () => { stopLoop(); pauseVideos() }, onClose: () => { if (!document.hidden) startLoop() } }))
+  aiP.then((ai) => ai.open()).catch(() => { aiP = null; alert('This part of the site could not load. Please check your connection and try again.') })
+}
+document.querySelectorAll('[data-aitryon]').forEach((b) => b.addEventListener('click', openAi))

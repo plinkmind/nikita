@@ -67,7 +67,13 @@ export function initStudio(hooks = {}) {
   const needs = () => { const n = new Set(); Object.keys(state).forEach((id) => { const p = findProduct(id); if (p) needOf(p).split('+').forEach((k) => n.add(k)) }); return n }
   const debug = new URLSearchParams(location.search).has('debug') // add ?debug to the address to see tracking diagnostics
   const stat = { fpsT: 0, camN: 0, cam: 0, detMs: 0, dup: 0, ms: { hand: 0, pose: 0, seg: 0 } }
-  let lastVT = -1, frameNo = 0
+  let lastVT = -1, frameNo = 0, vfcFrames = 0, seenVfc = 0, lastNewAt = 0, budgetK = 1
+  // New camera frames are detected with requestVideoFrameCallback where the browser has it (exact), otherwise from the video
+  // clock. Some browsers update that clock coarsely; if it has not moved for 40 ms we treat the frame as new anyway, so tracking
+  // never drops to a fraction of the camera rate.
+  const hasVfc = 'requestVideoFrameCallback' in HTMLVideoElement.prototype
+  const onVfc = () => { vfcFrames++; vid.requestVideoFrameCallback(onVfc) }
+  if (hasVfc) vid.requestVideoFrameCallback(onVfc)
 
   // ---- body (pose): own filter, visibility per point, graceful loss ----
   const poseFilter = new PointSetFilter({ minCutoff: 1.0, beta: 25 }), posePresence = new Presence(200, 300, 120)
@@ -84,11 +90,13 @@ export function initStudio(hooks = {}) {
   }
   // ---- hands: one filter per (true) hand, 2D picture points AND 3D world points, low-confidence readings ignored ----
   const handSlots = {}
+  let handSeenAt = -1e9
   let hands = []
   function updateHands(now, w, h) {
     const r = models.hand.t.detectForVideo(vid, now), seen = new Set()
     r.landmarks.forEach((lm, i) => {
       const hd = r.handedness[i]?.[0]; if (!hd || hd.score < 0.6) return // not sure it is a hand: ignore it
+      handSeenAt = now
       const right = hd.categoryName === 'Left' // the model assumes a mirrored image; we analyse the un-mirrored camera picture
       const key = right ? 'R' : 'L', s = (handSlots[key] ||= { f: new PointSetFilter({ minCutoff: 1.2, beta: 30 }), fw: new PointSetFilter({ minCutoff: 1.2, beta: 30 }), pr: new Presence(150, 220, 90), t: 0 })
       const dt = s.t ? (now - s.t) / 1000 : 0; s.t = now
@@ -102,7 +110,8 @@ export function initStudio(hooks = {}) {
     for (const key of ['L', 'R']) {
       const s = handSlots[key]; if (!s) continue
       const a = s.pr.update(now, seen.has(key))
-      if (a > 0 && s.P) hands.push({ P: s.P, Wd: s.Wd, right: s.right, alpha: a }); else { s.f.reset(); s.fw.reset(); s.P = null }
+      s.streak = seen.has(key) ? (s.streak || 0) + 1 : 0
+      if (a > 0 && s.P) hands.push({ P: s.P, Wd: s.Wd, right: s.right, alpha: a, sure: s.streak >= 2 || (s.sure && a > 0) }), (s.sure = s.streak >= 2 || (s.sure && a > 0)); else { s.f.reset(); s.fw.reset(); s.P = null; s.sure = false }
     }
   }
   // ---- hair mask (segmentation), smoothed over time so its edge does not shimmer ----
@@ -118,7 +127,7 @@ export function initStudio(hooks = {}) {
     }
     octx.fillStyle = '#ff3b6b'; if (pose) pose.forEach((p) => p.v > 0.5 && octx.fillRect(p.x - 3, p.y - 3, 6, 6))
     octx.fillStyle = '#4da3ff'; hands.forEach((hd) => hd.P.forEach((p) => octx.fillRect((cam.mirror ? w - p.x : p.x) - 2, p.y - 2, 5, 5)))
-    const lines = [`camera ${stat.cam} fps | skipped duplicate refreshes ${stat.dup}`, `model ms: face ${stat.detMs.toFixed(1)} hand ${stat.ms.hand.toFixed(1)} pose ${stat.ms.pose.toFixed(1)} seg ${stat.ms.seg.toFixed(1)} | need: ${[...need].join(', ') || '-'}`, `face missed ${head.misses} | implausible readings rejected ${head.rejects}`, M ? `presence ${M.alpha.toFixed(2)} | in frame ${(M.inFrame * 100) | 0}% | turn ${(M.yaw * 57.3).toFixed(0)} deg | nod ${(M.pitch * 57.3).toFixed(0)} deg | roll ${(M.roll * 57.3).toFixed(0)} deg | ${M.cm.toFixed(1)} px/cm` : 'no face', `${out.width}x${out.height} | mirror ${cam.mirror}`]
+    const lines = [`camera ${stat.cam} fps | frame ${(stat.procMs || 0).toFixed(0)} ms (draw ${(stat.drawMs || 0).toFixed(0)}) | load-saving x${budgetK} | delegates: face ${tracker?.__delegate || '-'} hand ${models.hand?.t?.__delegate || '-'}`, `model ms: face ${stat.detMs.toFixed(1)} hand ${stat.ms.hand.toFixed(1)} pose ${stat.ms.pose.toFixed(1)} seg ${stat.ms.seg.toFixed(1)} | need: ${[...need].join(', ') || '-'}`, `face missed ${head.misses} | implausible readings rejected ${head.rejects}`, M ? `presence ${M.alpha.toFixed(2)} | in frame ${(M.inFrame * 100) | 0}% | turn ${(M.yaw * 57.3).toFixed(0)} deg | nod ${(M.pitch * 57.3).toFixed(0)} deg | roll ${(M.roll * 57.3).toFixed(0)} deg | ${M.cm.toFixed(1)} px/cm` : 'no face', `${out.width}x${out.height} | mirror ${cam.mirror}`]
     octx.font = `${Math.max(12, Math.round(h * 0.022))}px monospace`; octx.textAlign = 'left'
     lines.forEach((ln, i) => { const y = h - 8 - (lines.length - 1 - i) * Math.max(15, h * 0.026); octx.fillStyle = 'rgba(0,0,0,.65)'; octx.fillRect(4, y - Math.max(13, h * 0.022), octx.measureText(ln).width + 8, Math.max(16, h * 0.026)); octx.fillStyle = '#fff'; octx.fillText(ln, 8, y) })
     octx.restore()
@@ -133,6 +142,7 @@ export function initStudio(hooks = {}) {
     const x = handCv.getContext('2d'); x.clearRect(0, 0, handCv.width, handCv.height)
     const X = (p) => (cam.mirror ? w - p.x : p.x)
     hands.forEach((hd) => {
+      if (!hd.sure) return // a hand seen in only one frame may be a false detection: do not erase anything for it
       const P = hd.P, fw = Math.hypot(P[5].x - P[9].x, P[5].y - P[9].y) * 1.15
       x.save(); x.globalAlpha = hd.alpha; x.filter = 'blur(1.5px)'; x.fillStyle = x.strokeStyle = '#000'; x.lineCap = x.lineJoin = 'round'
       x.beginPath(); [0, 1, 5, 9, 13, 17].forEach((i, k) => (k ? x.lineTo(X(P[i]), P[i].y) : x.moveTo(X(P[i]), P[i].y))); x.closePath(); x.fill(); x.lineWidth = fw; x.stroke()
@@ -187,11 +197,11 @@ export function initStudio(hooks = {}) {
     // FRAME SYNC: the screen refreshes ~60 times a second but the camera delivers ~30 pictures. We analyse each new camera
     // picture exactly once and show THAT picture with THAT tracking result. (Before, tracking from one picture was drawn over a
     // newer picture, so makeup and jewellery trailed the face by a frame and appeared to swim or flicker.)
-    const newFrame = vid.currentTime !== lastVT
+    const tNow = performance.now(), newFrame = hasVfc ? vfcFrames !== seenVfc : vid.currentTime !== lastVT || tNow - lastNewAt > 40
     if (!newFrame && !dirty) { stat.dup++; return }
     const now = performance.now(), need = needs(), t = now / 1000
     if (newFrame) {
-      lastVT = vid.currentTime; frameNo++; stat.camN++
+      lastVT = vid.currentTime; seenVfc = vfcFrames; lastNewAt = tNow; frameNo++; stat.camN++
       if (now - stat.fpsT >= 1000) { stat.cam = stat.camN; stat.camN = 0; stat.fpsT = now }
       rctx.save(); if (cam.mirror) { rctx.translate(w, 0); rctx.scale(-1, 1) } rctx.drawImage(vid, 0, 0, w, h); rctx.restore()
       // hands are also tracked (computers only, every 2nd frame) when face items are on, so a hand passing in front of the
@@ -207,7 +217,9 @@ export function initStudio(hooks = {}) {
       } else if (!need.has('face')) M = null
       for (const k of ['hand', 'pose', 'seg']) {
         const m = models[k]; if (!(need.has(k) || (k === 'hand' && need.has('handOcc'))) || !m?.t) continue
-        if (k === 'hand' && !need.has('hand') && frameNo % 2) continue
+        // hands only for occlusion (no nails): every 3rd frame, every 6th while no hand has been seen for a second
+        if (k === 'hand' && !need.has('hand') && frameNo % ((performance.now() - handSeenAt < 1000 ? 3 : 6) * budgetK)) continue
+        if (k !== 'hand' && budgetK > 1 && frameNo % budgetK) continue
         if (frameNo % every(k, need) && !(k === 'pose' && !pose)) continue
         const t0 = performance.now()
         try { if (k === 'hand') updateHands(now, w, h); else if (k === 'pose') updatePose(now, w, h); else updateSeg(now) } catch { /* try again next frame */ }
@@ -216,6 +228,7 @@ export function initStudio(hooks = {}) {
       if (!need.has('hand') && !need.has('handOcc')) hands = []
     }
     dirty = false
+    const tDraw = performance.now()
     fctx.drawImage(raw, 0, 0)
     // draw, back to front: hair colour, your clothing photo, the real face on top of it, face items (makeup, jewellery), nails
     if (need.has('seg')) drawHairColour(fctx, hairMask, hairTint, state, w, h, raw)
@@ -247,7 +260,10 @@ export function initStudio(hooks = {}) {
     if (hint.textContent !== hm) hint.textContent = hm
     hint.hidden = !hm
     octx.drawImage(fin, 0, 0)
-    if (debug) { drawDebug(w, h, need); window.__glamify = { frames: frameNo, faceMissed: head.misses, faceRejected: head.rejects, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
+    stat.drawMs = (stat.drawMs || 0) * 0.9 + (performance.now() - tDraw) * 0.1; stat.procMs = (stat.procMs || 0) * 0.9 + (performance.now() - now) * 0.1
+    // adaptive budget: if a frame takes longer than the camera interval, run the secondary models less often (never the face)
+    if (frameNo % 15 === 0) budgetK = stat.procMs > (phone ? 50 : 38) ? Math.min(4, budgetK + 1) : stat.procMs < (phone ? 28 : 22) ? Math.max(1, budgetK - 1) : budgetK
+    if (debug) { drawDebug(w, h, need); window.__glamify = { frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
     if (compare) {
       const x = (w * split.value) / 100
       octx.save(); octx.beginPath(); octx.rect(0, 0, x, h); octx.clip(); octx.drawImage(raw, 0, 0); octx.restore()

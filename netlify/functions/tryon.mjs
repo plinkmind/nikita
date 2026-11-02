@@ -59,9 +59,9 @@ const toB64 = async (url) => { const r = await fetch(url); if (!r.ok) throw Obje
 
 // ---- providers ----
 const fashnH = () => ({ authorization: `Bearer ${env('FASHN_API_KEY')}`, 'content-type': 'application/json' })
-async function startOutfit(person, garment) {
+async function startOutfit(person, garment, category = 'auto') {
   const j = await call(`${FASHN()}/run`, { method: 'POST', headers: fashnH(), body: JSON.stringify({ model_name: env('FASHN_MODEL') || 'tryon-v1.6', inputs: {
-    model_image: person, garment_image: garment, category: 'auto', garment_photo_type: 'auto', mode: env('FASHN_MODE') || 'quality',
+    model_image: person, garment_image: garment, category, garment_photo_type: 'auto', mode: env('FASHN_MODE') || 'quality',
     segmentation_free: true, moderation_level: 'permissive', num_samples: 1, output_format: 'jpeg', return_base64: true } }) })
   if (!j?.id) throw Object.assign(new Error(j?.error?.message || 'no job id'), { code: 'upstream' })
   return 'f_' + j.id
@@ -112,7 +112,7 @@ export default async (req) => {
         if (!STYLES[body.style]) return fail(400, 'Unknown hairstyle'); if (body.colour && !(body.colour in COLOURS)) return fail(400, 'Unknown hair colour')
       }
       if (limited(req)) return fail(429, 'Too many requests. Please wait a few minutes and try again.', { code: 'rate' })
-      const jobId = type === 'outfit' ? await startOutfit(person, image(body.garment, 'The garment image')) : await startHair(person, STYLES[body.style], COLOURS[body.colour || 'natural'])
+      const jobId = type === 'outfit' ? await startOutfit(person, image(body.garment, 'The garment image'), ['auto', 'tops', 'bottoms', 'one-pieces'].includes(body.category) ? body.category : 'auto') : await startHair(person, STYLES[body.style], COLOURS[body.colour || 'natural'])
       return json(202, { jobId })
     }
     const m = url.pathname.match(/^\/api\/tryon\/([fr])_([A-Za-z0-9_-]{4,80})$/)

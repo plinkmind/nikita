@@ -263,3 +263,88 @@ git commit -m "Update 6.2: tracking fixes, photo jewellery, AI photo try-on via 
 git push
 ```
 `npm run build` is only a local check that everything compiles; Netlify runs its own build after `git push`.
+
+---
+
+## M. "See It On You": AI virtual outfit try-on (photo based)
+A separate experience from the live camera mirror. Buttons: **See It On You** (header) and **See it on you (AI photo)** (last
+chapter). Code: `src/aitryon/` (page), `netlify/functions/tryon.mjs` (secure backend, shared with the studio's AI Photo tab).
+
+**How it works:** the visitor uploads a photo of themselves and a photo of a garment, ticks the consent box and presses
+**Generate My Look**. The browser checks and shrinks both photos (JPG/PNG/WebP, max 15 MB, min 300 px, phone rotation fixed,
+re-saved as JPEG max 1536 px), sends them to **your own Netlify Function**, which forwards them to **FASHN** (and nowhere else),
+then asks FASHN for the status every 2 seconds. The page shows FASHN's real stage ("waiting", "generating") and the real elapsed
+time, then the generated image with a draggable before/after comparison, **Download result**, **Try another outfit** and
+**Start over**. If the key is missing or FASHN fails, the page says so and shows no result: there is no fake or sample image.
+
+### The AI model: FASHN tryon-v1.6
+- A model built only for virtual try-on: input = person photo + garment photo, output = the person wearing that garment.
+- Clothing types: tops (shirts, T-shirts, jackets, sweaters), bottoms, one-pieces (dresses, jumpsuits, kurtas/anarkalis); "Detect
+  automatically" lets FASHN decide.
+- Garment photo can be flat-lay, on a hanger, ghost mannequin or worn by a model.
+- Speed (FASHN's documentation): about 12 to 17 s in "quality" mode (default here), about 8 s "balanced", about 5 s "performance".
+  Output is about 864 x 1296 px.
+- Price: about **$0.075 per generated image** (1 FASHN credit). Check https://fashn.ai/pricing. Rate limit 25 per minute.
+- Why not IDM-VTON / CatVTON / OOTDiffusion: their licences are non-commercial and they need your own GPU server (see
+  `TRYON-MODELS.md`).
+
+### Limitations (please read)
+- It is a generated image. Faces are usually preserved, but small changes in the face, hands or background can happen.
+- One garment per generation (to try a top AND a jacket, generate twice, using the first result as "your photo").
+- Very loose layers (a dupatta, a long open jacket), heavy embroidery and fine text can be simplified.
+- Best input: one person, facing the camera, standing straight, arms slightly away from the body, even light, plain background.
+- Fit and size are a visual impression only, not a size recommendation.
+
+### Setup (5 minutes)
+1. Create an account at https://app.fashn.ai, buy a small amount of credit, open **API Keys** and create a key.
+2. Netlify > your site > **Site configuration > Environment variables > Add a variable**: `FASHN_API_KEY` = your key.
+   (Optional: `FASHN_MODE` = `balanced` for faster results.) Leave `VITE_TRYON_API_URL` empty or delete it.
+3. Push the code (commands below). Netlify builds the site and the function.
+4. Open the site > **See It On You**. The "not switched on" message is gone; upload two photos and generate.
+5. In FASHN's dashboard, keep a low credit balance or set a spending limit: anyone who opens your site can press the button. The
+   function also limits each visitor to 8 tries per 10 minutes (`RATE_MAX`) and only accepts requests from your own site.
+
+**Privacy:** photos travel browser > your Netlify Function > FASHN only. The function stores nothing and never logs images.
+The result is returned directly (base64), so it is not left on a public link. FASHN processes the photos under its own terms;
+the consent text names FASHN.
+
+### Test it locally
+- With a real key, the full site and the function: `npx netlify-cli dev` (after `npx netlify-cli link`).
+- Without a key (uses a local MOCK of FASHN that returns a stamped "TEST MOCK RESULT - NOT AI" image):
+  `npm run build` then `MOCK=1 node tests/serve.mjs 5300`, open http://localhost:5300.
+- Automated: `node tests/functions.test.mjs` (backend) and `node tests/aitryon.e2e.mjs` (browser flow; see the file header).
+
+---
+
+## N. Update 8: FREE AI try-on (no API key, no cost) + live tracking speed fixes
+
+### Free mode for "See It On You"
+If no `FASHN_API_KEY` is set in Netlify, "See It On You" now works **for free** using the public **IDM-VTON** research demo on
+Hugging Face (https://huggingface.co/spaces/yisol/IDM-VTON). Nothing to configure: just push the code.
+- The visitor's own browser sends the two photos to Hugging Face with Hugging Face's official client (`@gradio/client`). No key,
+  no payment, nothing passes through or is stored by Glamify.
+- **Limits of a free shared demo (please read):**
+  - Queue: when many people use it, results take from 30 seconds to a few minutes. The page shows the real queue position.
+  - Daily limit: Hugging Face gives each visitor a small amount of free GPU time per day (a few generations). When it is used
+    up, the page says so ("try again later").
+  - Availability: the demo is run by its authors, not by us. It can be asleep, busy or removed. The page then says the free
+    service is not reachable; it never shows a fake result.
+  - Quality: IDM-VTON is trained on **upper-body garments**: tops, shirts, T-shirts, jackets work best. Dresses, kurtas and
+    trousers may not transfer fully. Faces are usually kept.
+  - **Licence: CC BY-NC-SA 4.0, non-commercial.** Fine for demos, testing and showing the concept. For a paid/commercial
+    service, switch to FASHN (README section M): set `FASHN_API_KEY` and the page uses FASHN automatically.
+- Options (Netlify environment variables, then redeploy): `VITE_FREE_TRYON=off` hides free mode; `VITE_FREE_TRYON_SPACE` points
+  to another copy of the Space (for example your own duplicate of it on Hugging Face, which gets its own GPU quota).
+- Tested here against a local copy of the Space's exact interface (Gradio 4.24, same `/tryon` endpoint and inputs):
+  `tests/standin/idm_vton_standin.py`. The live Hugging Face Space could not be reached from the test machine, so the first
+  real generation happens on your site.
+
+### Live tracking: speed and stability fixes
+- New camera frames are detected with the browser's frame callback (exact) instead of the video clock. On browsers where the
+  clock updates coarsely, tracking could run at a fraction of the camera rate.
+- Automatic load saving: if a frame takes longer than the camera interval, the extra models (hair mask, body, hand occlusion)
+  run less often. The face model always runs on every frame.
+- Hand-in-front-of-face occlusion only acts on a hand seen in at least two frames (a single wrong reading no longer erases
+  makeup or earrings), and runs every 3rd frame (every 6th when no hand is around).
+- `?debug` now shows the frame time, the load-saving level and whether the models run on the GPU or the CPU. **If tracking still
+  looks poor, open the site with `?debug`, press Try It On and send a screenshot or short recording, with what looks wrong.**

@@ -37,7 +37,7 @@ export function initPhoto(box, hooks = {}) {
     let head = ''
     if (S.health === 'checking' || S.health === null) head = '<p class="ts-note">Checking the AI server...</p>'
     else if (S.health === 'ready' && !modeReady()) head = `<p class="ts-warn"><b>AI ${S.mode === 'outfit' ? 'outfit' : 'hairstyle'} try-on is not set up on the server yet.</b> The site owner can enable it with the steps in the README.</p>`
-    else if (S.health !== 'ready') head = `<p class="ts-warn"><b>AI photo try-on is not available yet.</b> ${S.health === 'unconfigured' ? 'The server is running, but no AI service has been set up on it.' : 'There is no AI server connected to this website.'} The live camera try-on still works. The site owner can set this up with the steps in the README.</p><button class="chip" data-ph="recheck">Check again</button>`
+    else if (S.health !== 'ready') head = `<p class="ts-warn"><b>AI photo try-on is not available yet.</b> ${S.health === 'unconfigured' ? 'The server is running, but no AI service has been set up on it.' : 'There is no AI server connected to this website.'} The live camera try-on still works.</p><div class="ts-chips">${S.mode === 'outfit' ? '<button class="chip on" data-ph="free">Try outfits free: See It On You</button>' : ''}<button class="chip" data-ph="recheck">Check again</button></div>`
     box.innerHTML = `<div class="ts-grp"><h3>AI photo try-on</h3><p class="ts-note"><b>This makes a generated image</b> using an AI model on a server. It is not a live preview, and results can differ from the real garment or hairstyle.</p>${head}</div>
       <div class="ts-opt"><span>What do you want to try?</span><div class="ts-chips"><button class="chip${S.mode === 'outfit' ? ' on' : ''}" data-ph="mode:outfit"${busy ? ' disabled' : ''}>Outfit</button><button class="chip${S.mode === 'hair' ? ' on' : ''}" data-ph="mode:hair"${busy ? ' disabled' : ''}>Hairstyle</button></div></div>
       <div class="ts-opt"><span>1. Your photo${S.mode === 'outfit' ? ' (upper body or full body, facing the camera)' : ' (clear face and hair, facing the camera)'}</span>
@@ -87,6 +87,7 @@ export function initPhoto(box, hooks = {}) {
     else if (k === 'cancel') return cancel()
     else if (k === 'toggle') S.before = !S.before
     else if (k === 'recheck') return checkServer()
+    else if (k === 'free') { document.querySelector('[data-aitryon]')?.click(); return }
     else if (k === 'reset') { Object.assign(S, { person: null, garment: null, result: null, err: '', consent: false, before: false }) }
     else if (k === 'save') { hooks.save?.(S.result, S.mode === 'outfit' ? 'AI outfit' : 'AI hairstyle'); S.err = '' }
     draw()

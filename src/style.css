@@ -160,3 +160,10 @@ h1,h2{font-family:Italiana,"Didot",Georgia,serif;font-weight:400;line-height:1.0
   .l-sub{opacity:1} /* its fade-in animation is switched off, so show it right away */
   #hint i{transform:none}
 }
+
+/* "See It On You" (AI) entry points */
+.hactions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.demo.ai small{font-size:10px;letter-spacing:.12em;margin-left:4px;padding:1px 6px;border-radius:999px;background:var(--brass);color:#0D1118;font-weight:600}
+.ctas{display:flex;flex-wrap:wrap;gap:10px;justify-content:inherit}
+.tryon-cta.ai{background:linear-gradient(110deg,rgba(226,190,124,.25),rgba(226,190,124,.08))}
+@media (max-width:520px){.hactions{gap:6px}.hactions .demo[href]{display:none}}
