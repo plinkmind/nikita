@@ -1,12 +1,16 @@
 {
   "name": "glamify-xr",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.2.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-wasm.mjs",
     "dev": "vite --open",
+    "prebuild": "node scripts/copy-wasm.mjs",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "fetch-models": "node scripts/fetch-models.mjs",
+    "server": "node server/index.js"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "0.10.17",

@@ -1,4 +1,24 @@
-# Reference photos that would help (please send what you can)
+# Reference photos
+
+## Received (Update 6) - thank you
+- Jewellery product photos (kundan set, filigree, gem leaf, pearl set) - four were cut out and used as demo **photo jewellery**.
+- Stud-on-ear photo - used to check ear-lobe position and size.
+- Garment product photos and a full-body model photo - the right kind of input for AI outfit try-on.
+- Hairstyle sheets - the AI hairstyle menu now follows them. Curly before/after - used as the quality target.
+
+**Rights:** some of these look like images from other websites (one carries a stock-photo watermark). They are used only as demo
+and test material. Use your own product photos, or ones you are licensed to use, on the live site.
+
+## Still most useful
+1. **A 10-second screen recording from your phone** with `?debug` at the end of the address, doing the movement that used to break
+   (turn left/right, nod). Tell me the phone model and browser.
+2. **An open hand, back of the hand toward the camera**, fingers slightly apart, even light (none of the test photos had this).
+3. **Your own jewellery as transparent PNGs** (front view, at least 1000 px), with the real length of each earring and the width of
+   each necklace in cm. Run `python3 scripts/cutout.py in.png out.png` if they are on a plain white background.
+
+---
+
+## Earlier list
 
 I cannot see your phone, so real photos and screen recordings are the fastest way to get the results right. Nothing below is required to
 use the site. Do not send photos of other people without their permission. You can blur your face if you prefer.

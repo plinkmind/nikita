@@ -170,3 +170,4 @@ body.studio-open{overflow:hidden}
 .ts-photo .chip[disabled]{opacity:.45;cursor:not-allowed}
 a.chip{text-decoration:none;color:inherit}
 .ts-photo select{min-height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:#11151d;color:#F7F1E8;font:inherit;font-size:15px;padding:0 10px;width:100%}
+.ts-edit[hidden],.ts-photo[hidden]{display:none}

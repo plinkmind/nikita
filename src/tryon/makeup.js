@@ -1,4 +1,10 @@
 // Makeup renderer: every product is drawn from live face landmarks.
+// The landmarks come from the head tracker (track/head.js): the head's rigid motion is followed closely and the expression
+// (lips, lids, brows) is smoothed separately, so masks move with the face without shimmering. Lip colour uses the
+// lighting-aware tint (render/tint.js) so the real lip texture and shine stay visible. Cheek products fade on the side of the
+// face that turns away from the camera (from the 3D head rotation) instead of being painted on a cheek you cannot see.
+import { tintRegion, meanLum } from './render/tint.js'
+import { rotate } from './track/geometry.js'
 const BIG = 6000
 const sh = (n, c, m) => ({ n, c, m })
 
@@ -37,6 +43,10 @@ const ell = (c, rx, ry, rot) => Array.from({ length: 28 }, (_, i) => {
   const a = (i / 28) * Math.PI * 2, x = Math.cos(a) * rx, y = Math.sin(a) * ry
   return { x: c.x + x * Math.cos(rot) - y * Math.sin(rot), y: c.y + x * Math.sin(rot) + y * Math.cos(rot) }
 })
+// point at fraction t along a polyline
+const along = (pts, t) => { const x = t * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(x)); return lerp(pts[i], pts[i + 1], x - i) }
+// how much of one side of the face (side -1 = canonical left, +1 = right) faces the camera: 1 = fully, 0 = turned away
+const sideVis = (M, side) => { if (!M.fit) return 1; const n = rotate(M.fit.R, [side * 0.8, 0, 0.6]); return Math.max(0, Math.min(1, (-n[2] + 0.05) / 0.45)) }
 const trace = (c, pts) => { c.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length; i++) c.lineTo(pts[i].x, pts[i].y); c.closePath() }
 
 // Soft-edged fill. The shape is drawn far off-canvas and only its blurred shadow lands on the image.
@@ -89,23 +99,25 @@ const DRAW = {
   },
   blush(c, M, s, v) {
     const { P, fw, roll } = M
-    ;[[205, 234], [425, 454]].forEach(([a, b]) => {
-      const ctr = lerp(P[a], P[b], 0.22), r = fw * 0.12
-      soft(c, [ell(ctr, r, r * 0.78, roll)], s.c, r * 0.9, v * 0.65, 'multiply')
-      soft(c, [ell(ctr, r, r * 0.78, roll)], s.c, r * 0.9, v * 0.4, 'soft-light')
+    ;[[205, 234, -1], [425, 454, 1]].forEach(([a, b, side]) => {
+      const ctr = lerp(P[a], P[b], 0.22), r = fw * 0.12, k = sideVis(M, side)
+      if (k < 0.02) return
+      soft(c, [ell(ctr, r, r * 0.78, roll)], s.c, r * 0.9, v * 0.65 * k, 'multiply')
+      soft(c, [ell(ctr, r, r * 0.78, roll)], s.c, r * 0.9, v * 0.4 * k, 'soft-light')
     })
   },
   highlighter(c, M, s, v) {
     const { P, fw, fh, roll, up } = M
-    ;[[117, -0.35], [346, 0.35]].forEach(([i, t]) => soft(c, [ell(P[i], fw * 0.075, fw * 0.028, roll + t)], s.c, fw * 0.025, v * 0.7, 'screen'))
+    ;[[117, -0.35, -1], [346, 0.35, 1]].forEach(([i, t, side]) => soft(c, [ell(P[i], fw * 0.075, fw * 0.028, roll + t)], s.c, fw * 0.025, v * 0.7 * sideVis(M, side), 'screen'))
     soft(c, [ell(lerp(P[168], P[6], 0.5), fw * 0.014, d(P[168], P[6]) * 0.7, roll)], s.c, fw * 0.015, v * 0.6, 'screen')
     soft(c, [ell(add(P[0], up, fw * 0.014), fw * 0.03, fw * 0.01, roll)], s.c, fw * 0.012, v * 0.7, 'screen')
   },
   eyeshadow(c, M, s, v) {
     const { P, up } = M, mode = s.m || 'source-over'
     EYES.forEach((e) => {
-      const w = d(P[e.out], P[e.inn]), top = e.up.map((i) => P[i])
-      const lifted = top.map((p, k) => add(p, up, w * (0.14 + 0.34 * Math.sin((k / (top.length - 1)) * Math.PI)))).reverse()
+      const w = d(P[e.out], P[e.inn]), top = e.up.map((i) => P[i]), brow = BROWS[EYES.indexOf(e)].low.map((i) => P[i])
+      // the upper edge follows the brow: at most ~60% of the way from the lid to the brow, so shadow never reaches the brow
+      const lifted = top.map((p, k) => { const t = k / (top.length - 1), b = along(brow, t), f = 0.22 + 0.4 * Math.sin(t * Math.PI); return lerp(p, b, f) }).reverse()
       soft(c, [[...top, ...lifted]], s.c, w * 0.14, v * 0.75, mode)
       if (s.n === 'Smokey') soft(c, [[...e.low.map((i) => P[i]), ...e.low.map((i) => add(P[i], up, -w * 0.1)).reverse()]], s.c, w * 0.1, v * 0.7, 'multiply')
       if (s.n === 'Shimmer' || s.n === 'Golden') soft(c, [ell(add(lerp(P[e.out], P[e.inn], 0.5), up, w * 0.16), w * 0.28, w * 0.09, M.roll)], '#ffffff', w * 0.1, v * 0.45, 'screen')
@@ -139,10 +151,17 @@ const DRAW = {
     const { P, fw } = M
     BROWS.forEach((b) => soft(c, [[...b.up, ...b.low.slice().reverse()].map((i) => P[i])], s.c, fw * 0.012, v * 0.75))
   },
-  lipstick(c, M, s, v) {
-    const { P, fw } = M, shapes = [LIPS_OUT.map((i) => P[i]), LIPS_IN.map((i) => P[i])]
-    soft(c, shapes, s.c, fw * 0.008, v * 0.7, 'source-over', 'evenodd')
-    soft(c, shapes, s.c, fw * 0.008, v * 0.5, 'multiply', 'evenodd')
+  lipstick(c, M, s, v, raw) {
+    const { P, fw, W, H } = M, shapes = [LIPS_OUT.map((i) => P[i]), LIPS_IN.map((i) => P[i])]
+    const [mask, mx] = scratch(W, H, 2)
+    soft(mx, shapes, '#000', Math.max(1, fw * 0.006), 1, 'source-over', 'evenodd') // soft-edged lip mask, the mouth opening stays clear
+    const now = performance.now()
+    if (raw && now - lipLum.t > 300) { // measure the real lip brightness (cheap, a few times a second)
+      lipLum.t = now; const xs = shapes[0].map((p) => p.x), ys = shapes[0].map((p) => p.y), x0 = Math.max(0, Math.min(...xs) - 4), y0 = Math.max(0, Math.min(...ys) - 4)
+      const m = meanLum(raw, mask, x0, y0, Math.min(W - x0, Math.max(...xs) - x0 + 8), Math.min(H - y0, Math.max(...ys) - y0 + 8))
+      if (m != null) lipLum.v = lipLum.v == null ? m : lipLum.v * 0.6 + m * 0.4
+    }
+    tintRegion(c, mask, s.c, v, lipLum.v, W, H, { slot: 3, minScale: 0.15, lighten: 0.7, richness: 0.35 })
   },
   gloss(c, M, s, v) {
     const { P, roll } = M, w = d(P[61], P[291])
@@ -151,6 +170,7 @@ const DRAW = {
     soft(c, [ell(lerp(P[0], P[13], 0.5), w * 0.12, w * 0.025, roll)], '#ffffff', w * 0.03, v * 0.4, 'screen')
   },
 }
+const lipLum = { t: 0, v: null }
 const ORDER = ['primer', 'foundation', 'concealer', 'blush', 'highlighter', 'eyeshadow', 'eyeliner', 'mascara', 'brows', 'lipstick', 'gloss']
 
 export function drawMakeup(c, M, state, raw) {

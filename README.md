@@ -208,3 +208,22 @@ Photos are held in server memory only while the job runs, never saved to disk or
 ## J. Update 5: earrings, makeup stability, nails, honest live hair/outfits
 Read `FIX-REPORT.md` (what was fixed and what still needs external services) and `REFERENCE-PHOTOS.md` (the images that would help most).
 Everything was tested on simulated data only; please test on your phone with `?debug` and send me recordings.
+
+---
+
+## K. Update 6: real-model testing, stable tracking, photo jewellery, FASHN option
+Read `FIX-REPORT.md` first (root causes, measured before/after), then `TESTING-REPORT.md`.
+
+**New one-time step (automatic):** `npm run dev` and `npm run build` now copy MediaPipe's WASM runtime from `node_modules` into
+`public/mediapipe/wasm`, so the site no longer depends on cdn.jsdelivr.net. Nothing to do; just run `npm install` once as before.
+
+**Optional: serve the AI models from your own site** (faster first load, works where Google storage is blocked):
+`npm run fetch-models`, then add `VITE_MODEL_BASE=/models/` to `.env` (and to Netlify's environment variables). About 50 MB.
+
+**Photo jewellery:** Jewellery tab > "Product photos (demo)". To add your own product, see the comment above `photo(...)` in
+`src/tryon/jewellery.js` and list its id in `src/tryon/catalog.js`. Replace the demo images before going live.
+
+**AI outfits with FASHN (recommended):** create an API key at https://app.fashn.ai, then on the AI server set
+`TRYON_PROVIDER=fashn` and `FASHN_API_KEY=...` (see `server/.env.example`). Hairstyles still need the Google Cloud setup from
+section I. A server with only FASHN offers outfits and honestly reports hairstyles as not set up. Deploy the server as in section I
+(it runs anywhere Node 18+ runs; with FASHN only, no Google project is needed: e.g. Render, Railway, Fly.io or Cloud Run).

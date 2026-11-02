@@ -22,6 +22,7 @@ export const CATEGORIES = {
       { name: 'Necklaces', ids: ['necklace', 'chain', 'pendant'] },
       { name: 'Nose rings', ids: ['nosering', 'nosepin'] },
       { name: 'Head jewellery', ids: ['tiara'] },
+      { name: 'Product photos (demo)', ids: ['p-kundan-jhumka', 'p-kundan-necklace', 'p-filigree-necklace', 'p-gem-necklace'] },
     ],
   },
 }

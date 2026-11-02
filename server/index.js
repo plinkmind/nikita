@@ -4,7 +4,7 @@
 import http from 'node:http'
 import crypto from 'node:crypto'
 import { hasGoogleAuth } from './google.js'
-import { outfitTryOn, hairEdit, STYLES, COLOURS } from './providers.js'
+import { outfitTryOn, outfitProvider, hairEdit, STYLES, COLOURS } from './providers.js'
 
 const MAX_IMG = 8 * 1024 * 1024 // decoded bytes per image (Google's try-on limit is 10 MB)
 
@@ -12,7 +12,9 @@ export function createServer(env = process.env) {
   const origins = (env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean)
   const maxConcurrent = +env.MAX_CONCURRENT || 3, rateMax = +env.RATE_MAX || 6, rateWindow = +env.RATE_WINDOW_MS || 10 * 60_000, ttl = +env.RESULT_TTL_MS || 10 * 60_000
   const jobs = new Map(), hits = new Map()
-  const configured = hasGoogleAuth(env)
+  const outfitReady = outfitProvider(env) === 'fashn' ? !!env.FASHN_API_KEY : hasGoogleAuth(env)
+  const hairReady = hasGoogleAuth(env)
+  const configured = outfitReady || hairReady
 
   const cors = (req, res) => {
     const o = req.headers.origin
@@ -44,7 +46,7 @@ export function createServer(env = process.env) {
       if (req.method === 'OPTIONS') { res.writeHead(204); return res.end() }
       const url = new URL(req.url, 'http://x'), ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim()
       if (req.method === 'GET' && url.pathname === '/api/health') {
-        return send(res, 200, { ok: true, configured, outfit: { model: env.TRYON_MODEL || 'virtual-try-on-001' }, hair: { model: env.HAIR_MODEL || 'gemini-2.5-flash-image', styles: Object.keys(STYLES), colours: Object.keys(COLOURS) }, limits: { imageMB: 8, perWindow: rateMax, windowMinutes: rateWindow / 60000 } })
+        return send(res, 200, { ok: true, configured, outfit: { ready: outfitReady, provider: outfitProvider(env), model: outfitProvider(env) === 'fashn' ? env.FASHN_MODEL || 'tryon-v1.6' : env.TRYON_MODEL || 'virtual-try-on-001' }, hair: { ready: hairReady, model: env.HAIR_MODEL || 'gemini-2.5-flash-image', styles: Object.keys(STYLES), colours: Object.keys(COLOURS) }, limits: { imageMB: 8, perWindow: rateMax, windowMinutes: rateWindow / 60000 } })
       }
       if (req.method === 'POST' && url.pathname === '/api/tryon') {
         if (!configured) return send(res, 501, { error: 'AI photo try-on is not set up on this server yet', code: 'not_configured' })
@@ -52,6 +54,7 @@ export function createServer(env = process.env) {
         let body; try { body = JSON.parse(await readBody(req, 14 * 1024 * 1024)) } catch (e) { return send(res, e.status || 400, { error: e.status === 413 ? 'The photos are too large' : 'Invalid request' }) }
         if (body.consent !== true) return send(res, 400, { error: 'Consent is required before a photo can be processed', code: 'consent' })
         const type = body.type, person = image(body.person, 'Your photo')
+        if ((type === 'outfit' && !outfitReady) || (type === 'hair' && !hairReady)) return send(res, 501, { error: `AI ${type === 'outfit' ? 'outfit' : 'hairstyle'} try-on is not set up on this server yet`, code: 'not_configured' })
         let work
         if (type === 'outfit') { const garment = image(body.garment, 'The garment image'); work = () => outfitTryOn(env, { person, garment }) }
         else if (type === 'hair') {
@@ -81,9 +84,9 @@ export function createServer(env = process.env) {
   server.close = ((orig) => function (...a) { clearInterval(sweep); return orig.apply(this, a) })(server.close)
   return server
 }
-const friendly = (e) => ({ quota: 'The AI service is at its usage limit right now. Try again later.', permission: 'The server is not allowed to use the AI service. The site owner needs to check the Google Cloud setup.', timeout: 'The AI service took too long. Try a smaller photo or try again.', empty: e.message, auth: 'The server could not sign in to Google Cloud. The site owner needs to check the setup.' }[e.code] || 'The AI service could not finish this try-on. Please try again.')
+const friendly = (e) => ({ pose: 'The AI could not find a body pose in the photo. Use a clear, front-facing photo showing your upper body.', input: 'The AI could not use one of the photos. Try a clear JPG or PNG.', blocked: 'The AI service declined this photo.', quota: 'The AI service is at its usage limit right now. Try again later.', permission: 'The server is not allowed to use the AI service. The site owner needs to check the Google Cloud setup.', timeout: 'The AI service took too long. Try a smaller photo or try again.', empty: e.message, auth: 'The server could not sign in to Google Cloud. The site owner needs to check the setup.' }[e.code] || 'The AI service could not finish this try-on. Please try again.')
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = +process.env.PORT || 8080
-  createServer().listen(port, () => console.log(`Glamify XR AI server listening on ${port}. configured=${hasGoogleAuth()}`))
+  createServer().listen(port, () => console.log(`Glamify XR AI server listening on ${port}. outfit provider=${outfitProvider(process.env)}`))
 }

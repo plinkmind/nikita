@@ -1,50 +1,87 @@
-# Fix report: tracking, jewellery, makeup, nails, hair, outfits
+# Fix report (Update 6): tracking stability, earrings, makeup, nails, jewellery realism
 
-Everything below was tested on **simulated data** (a synthetic 3D head, hand and body, and a fake camera). I could not use a real face, hand or
-phone, so **I have not confirmed these fixes on your device**. Where a number is given it comes from `TESTING-REPORT.md`.
+**What is different this time:** every result below was measured with the **real MediaPipe models** (the same model files the
+website loads) running on **real photographs** in a real browser (headless Chromium). The previous update was tested only on
+simulated landmarks. What I still could NOT do: run it on your phone, with a live camera, a real person moving and turning their
+head, or with the paid AI services (no keys and no network access to them here). Details: `TESTING-REPORT.md`.
 
-## 1. Earrings: root cause and fix
-**Root cause (from the code):** earrings were placed from 2D face-outline points (234 and 454) plus a fixed 2D offset. The ear is not part of the face mesh. When the head turns, the contour point on the far side slides across the face, so the far earring was drawn on the cheek, mouth or nose. Whether to hide it was decided by a weak 2D "turn" number. Earrings also tilted with the head instead of hanging down.
-**Fix:**
-- A real 3D head frame is built from the landmarks' depth (`headpose.js`). The ear is placed outside, below and behind the cheek point along the head's own axes.
-- An ear hidden by the turned head is **not drawn at all** (it is never moved to another landmark). Visibility fades smoothly, so it does not blink.
-- Earrings hang under gravity and swing slightly when the head moves.
-- Jewellery size comes from the true head width, so it keeps its size when the head turns.
-**Measured on the synthetic head (144 truly hidden ears):** old method drew 64 of them (44%); new method draws 0. Visible-ear position error is about 40% smaller (0.05 vs 0.09 face widths on average). End to end through the studio: no earring pixels on the face centre at 0 to 60 degrees, also while looking down, also with a wrong reading every 7th frame.
-**Not confirmed:** the real ear anatomy and the real accuracy of the model's depth values. An earring may still look a little too high or low on a real ear. `?debug` shows the head turn and nod, so I can adjust from your screenshots.
+---
 
-## 2. Makeup flicker
-I could not reproduce your flicker without your device, so these are the causes I found in the code and fixed:
-- Landmark jitter fed straight into the makeup shapes. **Fixed:** makeup uses its own calmer smoothing profile (still jitter about 25% lower than the base profile in the simulation, at the cost of slightly more lag).
-- The face model gave up on a moving face too easily (confidence settings 0.5). **Changed** to 0.4 / 0.3 / 0.3.
-- Short dropouts caused disappearing makeup. **Fixed:** the last good position is held for 0.2 s with no fading, then fades over 0.1 s. Test: a 120 ms dropout produced no dip.
-- Bad single readings (a face jumping or changing size between two pictures) moved the makeup. **Fixed:** glitch guard rejects them. Test: with a wrong reading every 7th frame, the lipstick centre moved about 2 pixels.
-- Detection ran on duplicate camera pictures, wasting time. **Fixed:** once per new camera picture.
-- Several models ran at once and competed for the GPU. **Fixed:** at most one extra model (hands, body or hair mask) runs per camera picture, in addition to the face model.
-**Not fixed:** makeup is still painted over a hand or hair that covers the face; lip and eye colours are not adapted to room lighting. **Still unknown:** whether your flicker is dropouts (camera model) or something else. `?debug` now counts "face dropouts" and "glitches rejected".
+## 1. Root causes found (in your latest ZIP), and what fixes them
 
-## 3. Hair
-A live flat hairstyle can never look like real hair, so **the cartoon-like live hairstyles and bangs were removed**. What remains live is **hair colour on your real hair** (a hair mask recolours the actual hair and keeps its light and shadow). Hairstyles are created in the **AI Photo** tab (Gemini image editing, general image editor, no identity guarantee). The Hair tab has a button that takes you there.
+| # | Symptom you reported | Root cause (found in the code, confirmed by measurement) | Fix |
+|---|---|---|---|
+| 1 | Makeup and jewellery **flicker / shake** | The smoothing filter divided **absolute screen positions** by the face width before filtering. The face width itself jitters about 1% per frame, so the whole face "breathed" by several pixels every frame. Measured: with typical webcam noise the previous version had **4.2 px** of earring jitter while still, **4x worse than no filter at all** (1.05 px), and lip points jumped up to **18.7 px**. | New filters normalise only the *speed*, never the position (`src/tryon/track/filters.js`). Still jitter now **0.51 px** (earrings) and **0.68 px** (lips). |
+| 2 | Makeup **swims / lags** behind the face | Tracking ran on one camera frame but was drawn over a newer frame (the screen refreshes at 60 Hz, the camera at 30 Hz, the phone ran detection only every 45 ms). Makeup and earrings also used two different filters, so they drifted apart. | **Frame sync:** each camera frame is analysed once and that exact frame is shown with its own tracking result (`studio.js loop`). One head model feeds every face item. |
+| 3 | Earrings **land on the cheek, mouth or nose** | Ear positions were built from 3D landmark depth combined with **mirrored** x-coordinates. Mirroring one axis flips 3D handedness, so on some head turns the "outward" direction pointed across the face. The model's confidence thresholds were also lowered to 0.3, so unreliable landmark sets were used instead of being treated as "no face". | MediaPipe's **canonical 3D face model is fitted to every frame** (rotation, size and position, using only rigid points: eye corners, nose bridge, forehead, temples). All 3D maths happens in camera coordinates; mirroring is applied only at the end. Ear lobes, nose piercings and the neck are fixed points on that 3D head: they are **never taken from a nearby landmark**, so they cannot jump to the nose or mouth. Implausible landmark sets (bad fit) are rejected. Confidence back to 0.5 / 0.6 / 0.5. |
+| 4 | Earrings **vanish too early** when turning | The far ear was hidden from about 7° of head turn. | Each ear has its own visibility from the fitted 3D rotation; the far ear fades between about 25° and 40° (when the head really hides it). |
+| 5 | Makeup **blinks off** | Face items were switched off whenever more than 20% of the face left the picture, and dropped instantly on a missed frame. | Tracking presence fades in 90 ms / holds 160 ms / fades out 240 ms; partial faces keep their makeup. After a real loss (over 0.5 s) tracking restarts fresh instead of sliding in from the old place. |
+| 6 | Nails painted in the **wrong places** | The "back of the hand" test was a 2D guess, never run on a real hand. | Rewritten with the model's **3D world landmarks**: each nail's facing direction is carried joint by joint along the finger, so a curled finger is handled. Checked on 3 real hand photos (see section 4). |
+| 7 | Hair-colour edge **shimmers** | Raw 0/1 hair mask, stretched, from a different frame than the one shown. | Mask analysed on the shown frame, averaged over time, soft-edged; colour applied with the lighting-aware tint. |
 
-## 4. Outfits
-The drawn cartoon-like garments were **removed**. Live outfit now means **your own garment photo** placed on your shoulders and torso (real fabric and print, but not bent around your body, and your arms are not drawn in front of it). The realistic option is the **AI Photo** tab (Google Virtual Try-On). Why Google's model: IDM-VTON, CatVTON and OOTDiffusion are non-commercial licences (see `TRYON-MODELS.md`).
+## 2. Measured results (real face model, real photo, known motion, realistic webcam noise)
 
-## 5. Nails
-- **Perspective:** nail width now comes from the true 3D finger length and nail length from the length seen in the picture, so when a finger points toward the camera the nail gets shorter but not thinner, and it disappears when seen edge-on (tested with fingers tilted 0 to 75 degrees).
-- **Spill:** nails are narrower than the finger (about 80% of its width on my test finger; real fingers not measured).
-- **Blend:** polish is multiplied into the picture first (so the real nail's light and shade show through) and then laid on top at partial opacity.
-- Left and right hands are tracked separately; readings below 0.6 confidence are ignored.
-**Not fixed:** there is still no true nail-plate segmentation, so the nail outline is an estimate from the finger bones, and the "back of the hand" detection has never been tested on real hands. A nail-segmentation model would be the real fix.
+Test: the portrait photo moved with known amounts (still, side to side up to 440 px/s, tilt +/-12.6°, closer/farther +/-25%).
+Error = distance from where the item should be. Pixels at a 960x720 frame, face about 135 px wide.
 
-## 6. Tracking engine
-Different smoothing for different features (base profile for anchors, calm profile for makeup; hands keep the base profile because nothing I tried beat it in the simulation), depth is filtered, glitch guard, in-frame confidence, graceful loss, scheduler, `?debug` diagnostics. See `TRACKING-AUDIT.md`.
+| | Earrings: jitter while still | Earrings: mean error moving | Earrings: worst error | Lips: jitter still | Lips: worst error |
+|---|---|---|---|---|---|
+| First ZIP | 1.17 px | 2.02 px | 5.8 px | 1.07 px | 5.8 px |
+| **Your latest ZIP** | **4.20 px** | 2.23 px | 13.5 px | **4.79 px** | **18.7 px** |
+| **This update** | **0.51 px** (-88%) | **1.64 px** (-26%) | **7.4 px** (-45%) | **0.68 px** (-86%) | **7.9 px** (-58%) |
 
-## 7. What still needs external models or services
+Raw file: `tests/results-motion.json`. Rerun: see `TESTING-REPORT.md`.
+**Not covered by this test:** turning left/right and nodding (a flat photo cannot turn). Those are handled by the 3D head fit and
+checked geometrically, but **must be confirmed on a real person**.
+
+## 3. Different tracking for different features (as you asked)
+
+| Feature | Tracking | Smoothing |
+|---|---|---|
+| Earrings, nose rings, necklace position | fitted 3D head only (no individual landmarks) | rigid head filter, responsive (tuned: 1 Hz / beta 45 position, 30 rotation) |
+| Makeup | head pose + expression shape filtered separately | rigid filter for movement + calmer expression filter (lips, lids, brows) |
+| Necklace tilt | body model shoulders (every 3rd frame) | own filter; the necklace position never depends on it, so it cannot jump |
+| Nails | hand model, 2D + 3D world points, per hand | own filter per hand, hands below 0.6 confidence ignored |
+| Hair colour | hair segmentation | time-averaged mask |
+| Live outfit | body model every frame | own filter + fade on loss |
+
+## 4. Feature by feature
+
+**Earrings and jewellery.** Positions from the 3D head fit; per-ear visibility; earrings hang under gravity and swing.
+**New: photo jewellery.** Real product photos (transparent PNG) are placed on the tracked ear lobe or neck at their **real size in
+centimetres**, with a soft contact shadow, and necklaces are hidden behind the chin. Four demo products were cut out from the
+reference images you sent (`public/products/demo/`, tool `scripts/cutout.py`). **Replace them with your own product photos before
+going live** (several of the reference images look like they come from other websites). How to add products: comment at the top of
+`JEWELLERY` in `src/tryon/jewellery.js`. The drawn (vector) jewellery is still there; product photos look far more realistic.
+
+**Makeup.** Stable masks (see table). Lipstick keeps the real lip texture: the lips' brightness is measured and shifted toward the
+shade, then the shade's colour is applied, inside a soft lip mask with the mouth opening cut out. Eyeshadow stops below the brow.
+Blush and highlighter fade on the cheek that turns away.
+
+**Nails.** Polish is painted inside an estimated nail shape on the last finger bone, in perspective (narrows when the finger rolls,
+shortens when it tilts), keeps the real nail's light and shade, and is cut by a soft mask so it cannot spill onto the skin. Nails
+facing away (tucked into a fist) and nails seen edge-on fade out. On 3 real hand photos: the 4 visible fingernails of the blue
+background hand are painted where the real nails are; tucked nails are hidden. **Limitation:** there is no nail-segmentation model
+in MediaPipe, so the nail outline is estimated from finger geometry; the test photos had no open hand with the back toward the camera
+(please send one).
+
+**Hair.** Live hair colour on your real hair (strands, shine and shadows kept). Live *haircuts* are not drawn: a flat shape over a
+live camera cannot look like real hair, and I will not pretend otherwise. **Hairstyles are made in AI Photo**, now with 15 styles
+taken from your reference sheets (sculpted bob, curtain bangs, shag, mermaid waves, deep curly side-part, half-up twisted crown...),
+and a stricter identity-preserving instruction.
+
+**Outfits.** Live mode = your garment photo on your shoulders and torso, now with your real light and folds blended in, and forearms
+held in front of the body drawn over the garment. It is still an approximation (no cloth simulation). **Realistic outfits = AI Photo**
+(a real try-on model). New: you can choose **FASHN tryon-v1.6** as the provider (purpose-built try-on, about 5 to 17 s per image) or
+keep Google Virtual Try-On. See `TRYON-MODELS.md`.
+
+## 5. What still needs external models, services or your input
+
 | Need | What | Status |
 |---|---|---|
-| Realistic outfits | Google Cloud Virtual Try-On (paid, retires 20 Jan 2027) | Server and page built, **not run live** |
-| Realistic hairstyles | Gemini image editing on Google Cloud (paid) | Server and page built, **not run live** |
-| Real 3D head pose from the model (better turn and nod) | Turn on the face model's pose matrix | Not done |
-| True nail outlines | A nail-segmentation model | Not done |
-| Makeup that ignores hands and hair | Face-skin mask from the segmentation model | Not done |
-| Photoreal jewellery | Your transparent product PNGs (see `REFERENCE-PHOTOS.md`) | Waiting for images |
+| Realistic AI outfits | FASHN API key (paid per image) **or** Google Cloud Virtual Try-On | Code done and tested against mocks of the documented APIs; **not run live** (no keys here) |
+| Realistic AI hairstyles | Google Cloud (Gemini image editing) | Code done, tested against a mock; **not run live** |
+| Confirmation on real devices | Your phone + `?debug` | **Needed.** Turning, nodding, low light and real camera noise were not testable here |
+| True nail outlines | A nail-segmentation model (none in MediaPipe) | Not available; geometric estimate used |
+| Makeup that ignores a hand in front of the face | Face-skin class of the multiclass segmenter | Not done |
+| Your own product photos | Transparent PNGs of your jewellery, garment photos you own | Waiting for you |

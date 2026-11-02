@@ -1,8 +1,9 @@
 // Virtual Try-On Studio: overlay UI, render loop, product panel, capture.
 import './tryon.css'
 import { Camera, describeError } from './camera.js'
-import { createTracker, createPoseTracker, createHandTracker, createSegmenter, Face } from './face.js'
-import { PointSetFilter } from './filters.js'
+import { createFaceTracker, createPoseTracker, createHandTracker, createSegmenter } from './track/mediapipe.js'
+import { HeadTracker } from './track/head.js'
+import { PointSetFilter, Presence } from './track/filters.js'
 import { initPhoto } from './photo.js'
 import { drawMakeup } from './makeup.js'
 import { JEWELLERY, drawJewellery, resetJewellery } from './jewellery.js'
@@ -46,22 +47,18 @@ export function initStudio(hooks = {}) {
   root.innerHTML = TEMPLATE; document.body.appendChild(root)
   const $ = (s) => root.querySelector(s)
   const out = $('.ts-out'), octx = out.getContext('2d'), vid = $('.ts-vid'), msg = $('.ts-msg'), hint = $('.ts-hint'), split = $('.ts-split')
-  const raw = document.createElement('canvas'), fin = document.createElement('canvas')
-  const rctx = raw.getContext('2d'), fctx = fin.getContext('2d')
-  const cam = new Camera(vid), face = new Face()
+  const raw = document.createElement('canvas'), fin = document.createElement('canvas'), lay = document.createElement('canvas')
+  const rctx = raw.getContext('2d'), fctx = fin.getContext('2d'), lctx = lay.getContext('2d')
+  const cam = new Camera(vid), head = new HeadTracker()
   const state = {}
   const phone = matchMedia('(pointer:coarse)').matches || Math.min(screen.width, screen.height) < 700
-  const DETECT_MS = phone ? 45 : 0 // phones: run the face model about 22x/second instead of every frame
-  let tracker = null, trackerTried = false, raf = 0, running = false, tab = 'makeup', sel = null, compare = false
-  let lastDetect = 0, lastLm = null, lastOpener = null
-  // keep drawing the last known face for a moment if tracking drops for a frame or two (stops jewellery flickering away)
-  const HOLD_MS = 300
-  let lastM = null, lastSeen = 0
+  let tracker = null, trackerTried = false, raf = 0, running = false, tab = 'makeup', sel = null, compare = false, dirty = true
+  let lastOpener = null, M = null, customImg = null, customNote = 'Your photo stays on this device. It is not uploaded.'
   // Extra models (body pose, hands, hair segmentation) are downloaded only when a product that needs them is applied.
   const EXTRA = { pose: { make: createPoseTracker, name: 'Body' }, hand: { make: createHandTracker, name: 'Hand' }, seg: { make: createSegmenter, name: 'Hair' } }
   const models = {}
   function ensure(k) {
-    const m = (models[k] ||= { t: null, busy: false, last: 0, failedAt: 0 })
+    const m = (models[k] ||= { t: null, busy: false, n: 0, ms: 0, failedAt: 0 })
     if (m.t || m.busy || (m.failedAt && performance.now() - m.failedAt < 8000)) return m
     m.busy = true; say(`Loading ${EXTRA[k].name.toLowerCase()} tracking...`)
     EXTRA[k].make().then((t) => { m.t = t; say('') }).catch(() => { m.failedAt = performance.now(); say(`${EXTRA[k].name} tracking could not load. Check your internet connection.`); setTimeout(() => say(''), 3500) }).finally(() => { m.busy = false })
@@ -69,46 +66,65 @@ export function initStudio(hooks = {}) {
   }
   const needs = () => { const n = new Set(); Object.keys(state).forEach((id) => { const p = findProduct(id); if (p) needOf(p).split('+').forEach((k) => n.add(k)) }); return n }
   const debug = new URLSearchParams(location.search).has('debug') // add ?debug to the address to see tracking diagnostics
-  const stat = { fpsT: 0, camN: 0, cam: 0, drawN: 0, draw: 0, detMs: 0, dup: 0, drop: 0, ms: { hand: 0, pose: 0, seg: 0 } }
-  const INTERVAL = { hand: phone ? 45 : 33, pose: 100, seg: phone ? 130 : 90 } // how often (ms) each extra model may run
-  let lastVT = -1
-  const poseFilter = new PointSetFilter(), handFilters = {}
-  let pose = null, poseSeen = 0, hands = [], handsSeen = 0, handSlots = {}, customImg = null, customNote = 'Your photo stays on this device. It is not uploaded.'
-  const hairMask = document.createElement('canvas'), hairTint = document.createElement('canvas')
+  const stat = { fpsT: 0, camN: 0, cam: 0, detMs: 0, dup: 0, ms: { hand: 0, pose: 0, seg: 0 } }
+  let lastVT = -1, frameNo = 0
+
+  // ---- body (pose): own filter, visibility per point, graceful loss ----
+  const poseFilter = new PointSetFilter({ minCutoff: 1.0, beta: 25 }), posePresence = new Presence(200, 300, 120)
+  let pose = null, poseT = 0
   function updatePose(now, w, h) {
-    const m = models.pose; if (!m?.t) return
-    const p = m.t.detectForVideo(vid, now).landmarks[0]
+    const p = models.pose.t.detectForVideo(vid, now).landmarks[0]
+    const dt = poseT ? (now - poseT) / 1000 : 0; poseT = now
     if (p) {
-      const pts = p.map((q) => ({ x: (cam.mirror ? 1 - q.x : q.x) * w, y: q.y * h, v: q.visibility ?? 0 }))
-      pose = poseFilter.apply(pts, now / 1000, Math.hypot(pts[11].x - pts[12].x, pts[11].y - pts[12].y) || w * 0.3); poseSeen = now
-    } else if (now - poseSeen > HOLD_MS) { pose = null; poseFilter.reset() }
+      if (posePresence.stale(now)) poseFilter.reset()
+      const pts = p.map((q) => ({ x: (cam.mirror ? 1 - q.x : q.x) * w, y: q.y * h, z: (q.z || 0) * w, v: q.visibility ?? 0 }))
+      pose = poseFilter.filter(pts, dt, Math.hypot(pts[11].x - pts[12].x, pts[11].y - pts[12].y) || w * 0.3)
+    }
+    posePresence.update(now, !!p); if (posePresence.a <= 0) { pose = null; poseFilter.reset() }
   }
-  function updateHands(now) {
-    const m = models.hand; if (!m?.t) return
-    const r = m.t.detectForVideo(raw, now), list = []
+  // ---- hands: one filter per (true) hand, 2D picture points AND 3D world points, low-confidence readings ignored ----
+  const handSlots = {}
+  let hands = []
+  function updateHands(now, w, h) {
+    const r = models.hand.t.detectForVideo(vid, now), seen = new Set()
     r.landmarks.forEach((lm, i) => {
-      const hd = r.handedness[i]?.[0], label = hd?.categoryName || 'Right'
-      if (hd && hd.score < 0.6) return // not sure it is a hand: ignore instead of drawing nails in the wrong place
-      let P = lm.map((q) => ({ x: q.x * raw.width, y: q.y * raw.height, z: (q.z || 0) * raw.width }))
-      P = (handFilters[label] ||= new PointSetFilter()).apply(P, now / 1000, Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y) || 100)
-      const cz = (P[5].x - P[0].x) * (P[17].y - P[0].y) - (P[5].y - P[0].y) * (P[17].x - P[0].x) // which way the palm faces
-      const right = (label === 'Right') === cam.mirror // the hand model assumes a mirrored (selfie) image
-      list.push({ P, back: right ? cz < 0 : cz > 0 })
+      const hd = r.handedness[i]?.[0]; if (!hd || hd.score < 0.6) return // not sure it is a hand: ignore it
+      const right = hd.categoryName === 'Left' // the model assumes a mirrored image; we analyse the un-mirrored camera picture
+      const key = right ? 'R' : 'L', s = (handSlots[key] ||= { f: new PointSetFilter({ minCutoff: 1.2, beta: 30 }), fw: new PointSetFilter({ minCutoff: 1.2, beta: 30 }), pr: new Presence(150, 220, 90), t: 0 })
+      const dt = s.t ? (now - s.t) / 1000 : 0; s.t = now
+      if (s.pr.stale(now)) { s.f.reset(); s.fw.reset() }
+      const P = lm.map((q) => ({ x: q.x * w, y: q.y * h, z: (q.z || 0) * w }))
+      const size = Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y) || 100
+      s.P = s.f.filter(P, dt, size); s.Wd = s.fw.filter(r.worldLandmarks[i].map((q) => ({ x: q.x, y: q.y, z: q.z })), dt, 0.09); s.right = right
+      seen.add(key)
     })
-    if (list.length) { hands = list; handsSeen = now } else if (now - handsSeen > HOLD_MS) { hands = []; Object.values(handFilters).forEach((f) => f.reset()) }
+    hands = []
+    for (const key of ['L', 'R']) {
+      const s = handSlots[key]; if (!s) continue
+      const a = s.pr.update(now, seen.has(key))
+      if (a > 0 && s.P) hands.push({ P: s.P, Wd: s.Wd, right: s.right, alpha: a }); else { s.f.reset(); s.fw.reset(); s.P = null }
+    }
   }
-  function drawDebug(w, h, m, need) { // tracking diagnostics (add ?debug to the page address): landmarks and live numbers
-    octx.save(); octx.fillStyle = '#39ff14'
-    if (m) m.P.forEach((p, i) => { if (i % 3 === 0) octx.fillRect(p.x - 1, p.y - 1, 2, 2) })
+  // ---- hair mask (segmentation), smoothed over time so its edge does not shimmer ----
+  const hairMask = document.createElement('canvas'), hairTint = document.createElement('canvas')
+  function updateSeg(now) {
+    models.seg.t.segmentForVideo(vid, now, (r) => { const mk = r.categoryMask; if (mk) buildHairMask(mk.getAsUint8Array(), mk.width, mk.height, hairMask, cam.mirror) })
+  }
+  function drawDebug(w, h, need) { // tracking diagnostics (add ?debug to the page address)
+    octx.save()
+    if (M) {
+      octx.fillStyle = '#39ff14'; M.P.forEach((p, i) => { if (i % 3 === 0) octx.fillRect(p.x - 1, p.y - 1, 2, 2) })
+      ;['lobeL', 'lobeR', 'noseL', 'noseR', 'neck'].forEach((n) => { const a = M.project(n); octx.fillStyle = n.startsWith('lobe') ? '#ff2d6f' : '#29b6ff'; octx.fillRect(a.x - 4, a.y - 4, 8, 8) })
+    }
     octx.fillStyle = '#ff3b6b'; if (pose) pose.forEach((p) => p.v > 0.5 && octx.fillRect(p.x - 3, p.y - 3, 6, 6))
-    octx.fillStyle = '#4da3ff'; hands.forEach((hd) => hd.P.forEach((p) => octx.fillRect(p.x - 2, p.y - 2, 5, 5)))
-    const lines = [`screen ${stat.draw} fps | camera ${stat.cam} fps | skipped duplicate frames ${stat.dup}`, `model ms: face ${stat.detMs.toFixed(1)} hand ${stat.ms.hand.toFixed(1)} pose ${stat.ms.pose.toFixed(1)} seg ${stat.ms.seg.toFixed(1)} | need: ${[...need].join(', ') || '-'}`, `face dropouts ${stat.drop} | glitches rejected ${face.rejects}`, m ? `in frame ${(m.inFrame * 100) | 0}% | roll ${(m.roll * 57.3).toFixed(0)} deg | turn ${m.yaw.toFixed(2)} nod ${(m.nod || 0).toFixed(2)} | face width ${m.fw | 0}px` : 'no face', `${out.width}x${out.height} | mirror ${cam.mirror}`]
+    octx.fillStyle = '#4da3ff'; hands.forEach((hd) => hd.P.forEach((p) => octx.fillRect((cam.mirror ? w - p.x : p.x) - 2, p.y - 2, 5, 5)))
+    const lines = [`camera ${stat.cam} fps | skipped duplicate refreshes ${stat.dup}`, `model ms: face ${stat.detMs.toFixed(1)} hand ${stat.ms.hand.toFixed(1)} pose ${stat.ms.pose.toFixed(1)} seg ${stat.ms.seg.toFixed(1)} | need: ${[...need].join(', ') || '-'}`, `face missed ${head.misses} | implausible readings rejected ${head.rejects}`, M ? `presence ${M.alpha.toFixed(2)} | in frame ${(M.inFrame * 100) | 0}% | turn ${(M.yaw * 57.3).toFixed(0)} deg | nod ${(M.pitch * 57.3).toFixed(0)} deg | roll ${(M.roll * 57.3).toFixed(0)} deg | ${M.cm.toFixed(1)} px/cm` : 'no face', `${out.width}x${out.height} | mirror ${cam.mirror}`]
     octx.font = `${Math.max(12, Math.round(h * 0.022))}px monospace`; octx.textAlign = 'left'
     lines.forEach((ln, i) => { const y = h - 8 - (lines.length - 1 - i) * Math.max(15, h * 0.026); octx.fillStyle = 'rgba(0,0,0,.65)'; octx.fillRect(4, y - Math.max(13, h * 0.022), octx.measureText(ln).width + 8, Math.max(16, h * 0.026)); octx.fillStyle = '#fff'; octx.fillText(ln, 8, y) })
     octx.restore()
   }
-  function restoreFace(M) { // put the real face back on top of hair or clothes that were drawn over it
-    fctx.save(); fctx.beginPath(); FACE_OVAL.forEach((i, k) => (k ? fctx.lineTo(M.P[i].x, M.P[i].y) : fctx.moveTo(M.P[i].x, M.P[i].y))); fctx.closePath(); fctx.clip(); fctx.drawImage(raw, 0, 0); fctx.restore()
+  function restoreFace(c, M) { // put the real face back on top of clothes drawn over it (soft edge, no hard cut line)
+    c.save(); c.beginPath(); FACE_OVAL.forEach((i, k) => (k ? c.lineTo(M.P[i].x, M.P[i].y) : c.moveTo(M.P[i].x, M.P[i].y))); c.closePath(); c.clip(); c.drawImage(raw, 0, 0); c.restore()
   }
   const say = (t) => { msg.textContent = t || ''; msg.hidden = !t }
   const btn = (a) => $(`[data-a="${a}"]`)
@@ -116,17 +132,18 @@ export function initStudio(hooks = {}) {
   async function loadTracker() {
     if (tracker || trackerTried) return
     trackerTried = true; say('Loading AI face model...')
-    try { tracker = await createTracker(); say('') }
-    catch { say('The AI face model could not load. Check your internet connection and reopen the studio. The camera preview still works.') }
+    try { tracker = await createFaceTracker(); say('') }
+    catch { trackerTried = false; say('The AI face model could not load. Check your internet connection and reopen the studio. The camera preview still works.') }
   }
 
   async function start(fn) {
     say('Waiting for camera permission...')
     try { await (fn ? fn() : cam.start()) }
     catch (e) { say(describeError(e)); if (!cam.active) stopLoop(); return }
-    running = true; say(''); sync(); loadTracker(); cancelAnimationFrame(raf); loop()
+    running = true; dirty = true; say(''); sync(); loadTracker(); cancelAnimationFrame(raf); loop()
   }
-  function stopLoop() { running = false; cancelAnimationFrame(raf); face.reset(); resetJewellery(); lastLm = null; lastM = null; pose = null; poseFilter.reset(); hands = []; Object.values(handFilters).forEach((f) => f.reset()); hint.hidden = true; sync() }
+  function resetTracking() { head.reset(); head.presence.reset(); M = null; resetJewellery(); pose = null; poseFilter.reset(); posePresence.reset(); hands = []; Object.keys(handSlots).forEach((k) => delete handSlots[k]); lastVT = -1 }
+  function stopLoop() { running = false; cancelAnimationFrame(raf); resetTracking(); hint.hidden = true; sync() }
   function stop() {
     cam.stop(); stopLoop(); octx.clearRect(0, 0, out.width, out.height)
     say('Camera is off. Press Start Camera to continue.')
@@ -136,74 +153,73 @@ export function initStudio(hooks = {}) {
     btn('switch').disabled = !cam.active; btn('capture').disabled = !cam.active; btn('download').disabled = !cam.active; btn('compare').disabled = !cam.active
   }
 
+  // How often each extra model runs, in camera frames. The face and the hands (when nails are on) run on EVERY new frame:
+  // they are the items that must stick to fast-moving parts. The hair mask runs on every frame on computers (every 2nd on
+  // phones); necklace-only body tracking runs every 3rd frame (the necklace position comes from the head, see jewellery.js).
+  const every = (k, need) => (k === 'hand' ? 1 : k === 'pose' ? (Object.keys(state).some((id) => OUTFIT_IDS.has(id)) ? (phone ? 2 : 1) : 3) : phone ? 2 : 1)
+
   function loop() {
     if (!running) return
     raf = requestAnimationFrame(loop)
     if (vid.readyState < 2 || !vid.videoWidth) return
     const w = vid.videoWidth, h = vid.videoHeight
     if (out.width !== w || out.height !== h) {
-      [out, raw, fin].forEach((c) => { c.width = w; c.height = h })
+      [out, raw, fin, lay].forEach((c) => { c.width = w; c.height = h })
       $('.ts-view').style.setProperty('--ar', `${w} / ${h}`) // preview box follows the real camera shape
+      resetTracking()
     }
-    rctx.save(); if (cam.mirror) { rctx.translate(w, 0); rctx.scale(-1, 1) } rctx.drawImage(vid, 0, 0, w, h); rctx.restore()
-    fctx.drawImage(raw, 0, 0)
+    // FRAME SYNC: the screen refreshes ~60 times a second but the camera delivers ~30 pictures. We analyse each new camera
+    // picture exactly once and show THAT picture with THAT tracking result. (Before, tracking from one picture was drawn over a
+    // newer picture, so makeup and jewellery trailed the face by a frame and appeared to swim or flicker.)
+    const newFrame = vid.currentTime !== lastVT
+    if (!newFrame && !dirty) { stat.dup++; return }
     const now = performance.now(), need = needs(), t = now / 1000
-    // the camera delivers ~30 new pictures per second but the screen redraws ~60 times: analyse each new picture once, never twice
-    const newFrame = vid.currentTime !== lastVT; if (newFrame) { lastVT = vid.currentTime; stat.camN++ } else stat.dup++
-    stat.drawN++; if (now - stat.fpsT >= 1000) { stat.cam = stat.camN; stat.draw = stat.drawN; stat.camN = stat.drawN = 0; stat.fpsT = now }
-    ;['pose', 'hand', 'seg'].forEach((k) => need.has(k) && ensure(k))
-    // 1. extra models: AT MOST ONE of them runs on each new camera picture (the face model always runs), so they never fight over the GPU
     if (newFrame) {
-      const due = Object.entries(INTERVAL).filter(([k]) => need.has(k) && models[k]?.t).map(([k, iv]) => [k, (now - models[k].last) / iv]).filter(([, r]) => r >= 1).sort((x, y) => y[1] - x[1])[0]
-      if (due) {
-        const k = due[0], t0 = performance.now(); models[k].last = now
-        try {
-          if (k === 'hand') updateHands(now)
-          else if (k === 'pose') updatePose(now, w, h)
-          else models.seg.t.segmentForVideo(raw, now, (r) => { const mk = r.categoryMask; if (mk) buildHairMask(mk.getAsUint8Array(), mk.width, mk.height, hairMask) })
-        } catch { /* try again on the next turn */ }
+      lastVT = vid.currentTime; frameNo++; stat.camN++
+      if (now - stat.fpsT >= 1000) { stat.cam = stat.camN; stat.camN = 0; stat.fpsT = now }
+      rctx.save(); if (cam.mirror) { rctx.translate(w, 0); rctx.scale(-1, 1) } rctx.drawImage(vid, 0, 0, w, h); rctx.restore()
+      ;['pose', 'hand', 'seg'].forEach((k) => need.has(k) && ensure(k))
+      // all models analyse the SAME frame that is drawn below
+      if (tracker && need.has('face')) {
+        const t0 = performance.now(); let lm = null
+        try { lm = tracker.detectForVideo(vid, now).faceLandmarks[0] || null } catch { /* skipped frame */ }
+        stat.detMs = stat.detMs * 0.9 + (performance.now() - t0) * 0.1
+        M = head.update(lm, w, h, cam.mirror, now)
+      } else if (!need.has('face')) M = null
+      for (const k of ['hand', 'pose', 'seg']) {
+        const m = models[k]; if (!need.has(k) || !m?.t) continue
+        if (frameNo % every(k, need) && !(k === 'pose' && !pose)) continue
+        const t0 = performance.now()
+        try { if (k === 'hand') updateHands(now, w, h); else if (k === 'pose') updatePose(now, w, h); else updateSeg(now) } catch { /* try again next frame */ }
         stat.ms[k] = stat.ms[k] * 0.9 + (performance.now() - t0) * 0.1
       }
+      if (!need.has('hand')) hands = []
     }
-    if (need.has('seg')) drawHairColour(fctx, hairMask, hairTint, state, w, h)
-    // 2. face (analysed on new camera pictures only; the last good result is held briefly if tracking drops, then faded out)
-    let M = null, fade = 1, partial = false
-    if (tracker && need.has('face')) {
-      if (newFrame && now - lastDetect >= DETECT_MS) {
-        lastDetect = now
-        const t0 = performance.now(), lm = tracker.detectForVideo(vid, now).faceLandmarks[0] || null
-        stat.detMs = stat.detMs * 0.9 + (performance.now() - t0) * 0.1
-        if (lm) { const m = face.update(lm, w, h, cam.mirror, now / 1000); if (m) { lastM = m; lastSeen = now } } else stat.drop++
-      }
-      const age = now - lastSeen
-      if (lastM && age < HOLD_MS) {
-        if (lastM.inFrame > 0.8) { M = lastM; fade = 1 - Math.max(0, age - 200) / (HOLD_MS - 200) } else partial = true // short dropouts (under 0.2 s) are bridged without any fading; face partly outside the picture: hide rather than guess
-      } else if (lastM) { face.reset(); resetJewellery(); lastM = null }
-    }
-    // 3. body
+    dirty = false
+    fctx.drawImage(raw, 0, 0)
+    // draw, back to front: hair colour, your clothing photo, the real face on top of it, face items (makeup, jewellery), nails
+    if (need.has('seg')) drawHairColour(fctx, hairMask, hairTint, state, w, h, raw)
     const B = need.has('pose') ? bodyFrom(pose) : null
-    // 4. draw, back to front: your clothing photo, the real face on top of it, makeup (calm filter), jewellery, nails
     const outfitOn = Object.keys(state).some((id) => OUTFIT_IDS.has(id))
-    if (outfitOn && B) drawOutfit(fctx, B, state, customImg, t)
+    if (outfitOn && B) { fctx.save(); fctx.globalAlpha = posePresence.a; drawOutfit(fctx, B, state, customImg, t, raw, pose); fctx.restore(); if (M) restoreFace(fctx, M) }
     if (M) {
-      if (outfitOn && B) restoreFace(M)
-      drawMakeup(fctx, { ...M, P: M.Pm }, state, raw)
+      // face items fade together with tracking presence (no sudden pop in or out); a short miss keeps the last position
+      const target = M.alpha < 0.999 ? lctx : fctx
+      if (target === lctx) lctx.drawImage(fin, 0, 0)
+      drawMakeup(target, M, state, raw)
       M.shoulders = B ? { l: B.l, r: B.r } : null
-      drawJewellery(fctx, M, state, t)
-      if (fade < 1) { fctx.save(); fctx.globalAlpha = 1 - fade; fctx.drawImage(raw, 0, 0); fctx.restore() } // tracking really lost: fade the items out instead of leaving them floating
+      drawJewellery(target, M, state, t)
+      if (target === lctx) { fctx.save(); fctx.globalAlpha = M.alpha; fctx.drawImage(lay, 0, 0); fctx.restore() }
     }
-    if (need.has('hand')) {
-      fctx.save(); fctx.globalAlpha = 1 - Math.min(1, Math.max(0, now - handsSeen - 200) / (HOLD_MS - 200)); drawNails(fctx, hands, state, t); fctx.restore()
-    }
-    // 5. guidance
-    const hm = need.has('face') && tracker && partial ? 'Move back a little so your whole face is in the frame'
-      : need.has('face') && tracker && !M ? 'Looking for your face... move into the frame'
-      : need.has('pose') && models.pose?.t && !B ? 'Step back a little so your shoulders are in the frame'
+    if (need.has('hand')) drawNails(fctx, hands, state, t, raw, cam.mirror)
+    // guidance
+    const hm = need.has('face') && tracker && !M ? 'Looking for your face... move into the frame'
+      : outfitOn && models.pose?.t && !B ? 'Step back a little so your shoulders are in the frame'
       : need.has('hand') && models.hand?.t && !hands.length ? 'Show your hand to the camera, back of the hand facing you' : ''
     if (hint.textContent !== hm) hint.textContent = hm
     hint.hidden = !hm
     octx.drawImage(fin, 0, 0)
-    if (debug) drawDebug(w, h, M || lastM, need)
+    if (debug) { drawDebug(w, h, need); window.__glamify = { frames: frameNo, faceMissed: head.misses, faceRejected: head.rejects, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), hands: hands.length, pose: !!pose, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
     if (compare) {
       const x = (w * split.value) / 100
       octx.save(); octx.beginPath(); octx.rect(0, 0, x, h); octx.clip(); octx.drawImage(raw, 0, 0); octx.restore()
@@ -245,6 +261,7 @@ export function initStudio(hooks = {}) {
   const chip = (p) => `<button class="chip${state[p.id] ? ' on' : ''}${sel === p.id ? ' sel' : ''}" data-p="${p.id}">${iconOf(p)}${isFav(p.id) ? '&#9733; ' : ''}${esc(p.label)}</button>`
 
   function renderList() {
+    dirty = true
     const looks = lookTab()
     $('.ts-list').hidden = looks; $('.ts-looks').hidden = !(tab === 'saved' || tab === 'compare'); $('.ts-photo').hidden = tab !== 'photo'
     if (tab === 'photo') photo.show(); else photo.hide()
@@ -342,13 +359,13 @@ export function initStudio(hooks = {}) {
     renderList()
   })
   root.addEventListener('change', (e) => { const s = e.target.closest('[data-cmp]'); if (s) { if (s.dataset.cmp === 'A') cmpA = +s.value; else cmpB = +s.value; renderLooks() } })
-  root.addEventListener('input', (e) => { if (e.target.matches('.ts-rng input') && state[sel]) state[sel][e.target.dataset.k || 'v'] = +e.target.value })
+  root.addEventListener('input', (e) => { dirty = true; if (e.target.matches('.ts-rng input') && state[sel]) state[sel][e.target.dataset.k || 'v'] = +e.target.value })
 
   async function action(a) {
     if (a === 'close') close()
     else if (a === 'start') start()
     else if (a === 'stop') stop()
-    else if (a === 'switch') { try { await cam.switch(); face.reset() } catch (e) { say(describeError(e)); setTimeout(() => say(''), 2500) } }
+    else if (a === 'switch') { try { await cam.switch(); resetTracking() } catch (e) { say(describeError(e)); setTimeout(() => say(''), 2500) } }
     else if (a === 'compare') { compare = !compare; split.hidden = !compare; btn('compare').classList.toggle('on', compare) }
     else if (a === 'capture') capture()
     else if (a === 'download') download()

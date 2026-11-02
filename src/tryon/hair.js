@@ -8,21 +8,26 @@ const rgb = (hx) => [1, 3, 5].map((i) => parseInt(hx.slice(i, i + 2), 16))
 export const FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109]
 
 // ---- hair colour (segmentation) ----
-// `mask` = hair-alpha canvas built from the segmentation model; it is tinted and blended so the real hair keeps its light and shadow.
-export function buildHairMask(data, mw, mh, canvas) {
-  canvas.width = mw; canvas.height = mh
-  const ctx = canvas.getContext('2d'), img = ctx.createImageData(mw, mh)
-  for (let i = 0; i < data.length; i++) { img.data[i * 4 + 3] = data[i] === 1 ? 255 : 0 } // class 1 = hair
-  ctx.putImageData(img, 0, 0)
+// The model gives a hair / not-hair label per pixel (at 256x256 or 512x512). Raw, that edge flickers from frame to frame and
+// looks blocky when stretched. So: (1) the new mask is blended into a running average (temporal smoothing, ~3 frames),
+// (2) it is stretched with smoothing, which gives a soft edge, (3) the colour is applied with the lighting-aware tint
+// (keeps the real strands, shine and shadows). Mirroring is applied here because the model analyses the un-mirrored camera.
+import { tintRegion, meanLum } from './render/tint.js'
+let tmp = null, fresh = true, lumT = 0, lum = null
+export function buildHairMask(data, mw, mh, canvas, mirror) {
+  tmp = tmp || document.createElement('canvas'); tmp.width = mw; tmp.height = mh
+  const t = tmp.getContext('2d'), img = t.createImageData(mw, mh), d = img.data
+  for (let i = 0; i < data.length; i++) { const k = i * 4; d[k] = d[k + 1] = d[k + 2] = 255; d[k + 3] = data[i] === 1 ? 255 : 0 } // class 1 = hair
+  t.putImageData(img, 0, 0)
+  if (canvas.width !== mw || canvas.height !== mh) { canvas.width = mw; canvas.height = mh; fresh = true }
+  const c = canvas.getContext('2d'), a = fresh ? 1 : 0.6; fresh = false
+  c.save(); c.globalCompositeOperation = 'destination-out'; c.fillStyle = `rgba(0,0,0,${a})`; c.fillRect(0, 0, mw, mh) // old * (1 - a)
+  c.globalCompositeOperation = 'lighter'; c.globalAlpha = a; if (mirror) { c.translate(mw, 0); c.scale(-1, 1) } c.drawImage(tmp, 0, 0); c.restore() // + new * a
 }
-export function drawHairColour(c, mask, tint, state, w, h) {
+export function resetHairMask() { fresh = true; lum = null }
+export function drawHairColour(c, mask, tint, state, w, h, raw) {
   const st = state.haircolor; if (!st || !mask.width) return
-  const col = HAIR.find((p) => p.id === 'haircolor').shades[st.shade].c, [r, g, b] = rgb(col), lum = (0.3 * r + 0.59 * g + 0.11 * b) / 255
-  tint.width = mask.width; tint.height = mask.height
-  const t = tint.getContext('2d'); t.globalCompositeOperation = 'source-over'; t.fillStyle = col; t.fillRect(0, 0, tint.width, tint.height)
-  t.globalCompositeOperation = 'destination-in'; t.drawImage(mask, 0, 0)
-  c.save(); c.globalAlpha = st.v; c.globalCompositeOperation = 'color'; c.drawImage(tint, 0, 0, w, h)
-  if (lum > 0.55) { c.globalAlpha = st.v * 0.7; c.globalCompositeOperation = 'soft-light'; c.drawImage(tint, 0, 0, w, h) } // lift dark hair toward light colours
-  if (lum < 0.2) { c.globalAlpha = st.v * 0.6; c.globalCompositeOperation = 'multiply'; c.drawImage(tint, 0, 0, w, h) }
-  c.restore()
+  const col = HAIR.find((p) => p.id === 'haircolor').shades[st.shade].c
+  const now = performance.now(); if (raw && now - lumT > 400) { lumT = now; const m = meanLum(raw, mask); if (m != null) lum = lum == null ? m : lum * 0.7 + m * 0.3 }
+  tintRegion(c, mask, col, st.v, lum, w, h, { minScale: 0.3, lighten: 0.75, richness: 0.25 })
 }

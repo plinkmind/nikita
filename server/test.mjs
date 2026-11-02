@@ -39,7 +39,7 @@ const post = (path, body, headers = {}) => fetch(base + path, { method: 'POST', 
 const poll = async (id) => { for (let i = 0; i < 40; i++) { const j = await (await fetch(`${base}/api/tryon/${id}`)).json(); if (j.status !== 'running') return j; await new Promise((r) => setTimeout(r, 100)) } return { status: 'timeout' } }
 
 let r = await (await fetch(base + '/api/health')).json()
-check('health reports configured + models', r.ok && r.configured && r.outfit.model === 'virtual-try-on-001' && r.hair.styles.length === 7)
+check('health reports configured + models', r.ok && r.configured && r.outfit.ready && r.hair.ready && r.outfit.model === 'virtual-try-on-001' && r.hair.styles.length === 15)
 
 r = await post('/api/tryon', { type: 'outfit', person: jpeg, garment: jpeg }); check('refuses without consent (400)', r.status === 400 && (await r.json()).code === 'consent')
 r = await post('/api/tryon', 'not json'); check('rejects invalid JSON (400)', r.status === 400)
@@ -66,7 +66,7 @@ r = await fetch(`${base}/api/tryon/${jobId}`); check('result is deleted after it
 r = await post('/api/tryon', { type: 'hair', person: jpeg, style: 'h-bob', colour: 'burgundy', consent: true }); j = await poll((await r.json()).jobId)
 const parts = seen.body.contents[0].parts
 check('hair job returns the edited image', j.status === 'done' && j.result.base64 === 'SEFJUg==')
-check('hair prompt is built on the server from ids (bob + burgundy) and photo is sent inline', /bob/.test(parts[0].text) && /burgundy/.test(parts[0].text) && parts[1].inlineData.data === jpeg && seen.body.generationConfig.responseModalities.includes('IMAGE'))
+check('hair prompt is built on the server from ids (bob + burgundy) and photo is sent inline', /bob/.test(parts[0].text) && /same person/.test(parts[0].text) && /burgundy/.test(parts[0].text) && parts[1].inlineData.data === jpeg && seen.body.generationConfig.responseModalities.includes('IMAGE'))
 check('hair URL uses the global Gemini image model path', seen.url === '/v1/projects/proj-1/locations/global/publishers/google/models/gemini-2.5-flash-image:generateContent', seen.url)
 
 // failure modes
@@ -86,6 +86,29 @@ check('busy server refuses extra jobs (503)', a.status === 202 && b2.status === 
 app.close(); app = createServer({ ALLOWED_ORIGINS: '' }); await new Promise((r2) => app.listen(0, '127.0.0.1', r2)); base = `http://127.0.0.1:${app.address().port}`
 r = await post('/api/tryon', { type: 'outfit', person: jpeg, garment: jpeg, consent: true }); check('not configured -> honest 501, no fake result', r.status === 501 && (await r.json()).code === 'not_configured')
 r = await (await fetch(base + '/api/health')).json(); check('health says configured:false', r.configured === false)
+
+// FASHN provider (mock of the documented API: POST /v1/run -> id, GET /v1/status/:id)
+const fseen = { polls: 0 }; let fmode = 'ok'
+const fmock = http.createServer(async (req, res) => {
+  let body = ''; for await (const c of req) body += c
+  const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)) }
+  fseen.auth = req.headers.authorization
+  if (req.method === 'POST' && req.url === '/v1/run') { fseen.body = JSON.parse(body); return fmode === 'badkey' ? json(401, { error: { message: 'bad key' } }) : json(200, { id: 'pred-1', error: null }) }
+  if (req.url === '/v1/status/pred-1') { fseen.polls++; if (fseen.polls < 2) return json(200, { id: 'pred-1', status: 'processing' })
+    return fmode === 'pose' ? json(200, { id: 'pred-1', status: 'failed', error: { name: 'PoseError', message: 'no pose' } }) : json(200, { id: 'pred-1', status: 'completed', output: ['data:image/png;base64,RkFTSE4='] }) }
+  json(404, {})
+})
+await new Promise((r2) => fmock.listen(0, '127.0.0.1', r2))
+const fenv = { ALLOWED_ORIGINS: '', TRYON_PROVIDER: 'fashn', FASHN_API_KEY: 'fa-test', FASHN_BASE: `http://127.0.0.1:${fmock.address().port}/v1`, FASHN_POLL_MS: '20', RATE_MAX: '50' }
+app.close(); app = createServer(fenv); await new Promise((r2) => app.listen(0, '127.0.0.1', r2)); base = `http://127.0.0.1:${app.address().port}`
+r = await (await fetch(base + '/api/health')).json(); check('fashn: health says outfit ready, hair not ready (no Google set up)', r.outfit.ready === true && r.outfit.provider === 'fashn' && r.hair.ready === false)
+r = await post('/api/tryon', { type: 'hair', person: jpeg, style: 'h-bob', consent: true }); check('fashn-only server refuses hair honestly (501)', r.status === 501)
+r = await post('/api/tryon', { type: 'outfit', person: jpeg, garment: png, consent: true }); j = await poll((await r.json()).jobId)
+check('fashn: outfit job finishes with the returned image', j.status === 'done' && j.result.base64 === 'RkFTSE4=' && j.result.mimeType === 'image/png')
+check('fashn: documented request shape (model_name, inputs as data URIs, base64 output)', fseen.auth === 'Bearer fa-test' && fseen.body.model_name === 'tryon-v1.6' && fseen.body.inputs.model_image === `data:image/jpeg;base64,${jpeg}` && fseen.body.inputs.garment_image === `data:image/png;base64,${png}` && fseen.body.inputs.return_base64 === true && fseen.polls >= 2)
+fmode = 'pose'; fseen.polls = 0; r = await post('/api/tryon', { type: 'outfit', person: jpeg, garment: png, consent: true }); j = await poll((await r.json()).jobId); check('fashn: PoseError -> clear message about the photo', j.status === 'error' && j.code === 'pose' && /pose/.test(j.error))
+fmode = 'badkey'; r = await post('/api/tryon', { type: 'outfit', person: jpeg, garment: png, consent: true }); j = await poll((await r.json()).jobId); check('fashn: wrong API key -> permission error', j.status === 'error' && j.code === 'permission')
+fmock.close()
 
 app.close(); mock.close(); clearTokenCache()
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`); process.exit(results.every(Boolean) ? 0 : 1)

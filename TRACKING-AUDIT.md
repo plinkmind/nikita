@@ -1,4 +1,25 @@
-# Tracking audit: Glamify XR try-on
+# Tracking audit
+
+## Update 6 (latest): root causes confirmed with the real models
+This section supersedes the tables further down where they disagree. Everything here was measured with the real MediaPipe
+models on real photos (see `TESTING-REPORT.md`).
+
+| Area | Finding | Change | File |
+|---|---|---|---|
+| Temporal smoothing | Positions were divided by a jittering face width before filtering: the whole face shook. Measured 4x MORE jitter than no filter. | Filters normalise speed only. Separate rigid-head and expression filters, tuned by grid search. | `track/filters.js`, `track/head.js` |
+| Frame synchronisation | Landmarks from one camera frame drawn over a newer frame; extra models (hands, hair) ran on alternate frames. | Each camera frame analysed once and shown with its own results. Face and hands every frame. | `studio.js` |
+| Head pose | 3D frame built from landmark depth mixed with mirrored x (flips handedness); turn threshold 7 deg. | Canonical 3D face model fitted per frame (Horn similarity, rigid points only). Mirror applied only to 2D output. | `track/head.js`, `track/geometry.js`, `track/canonical.js` |
+| Landmark selection | Earrings derived from cheek-contour points. | Ear lobes / nose / neck are fixed 3D points on the fitted head; never a nearby landmark. | `track/head.js` ANCHORS |
+| Confidence | Face thresholds lowered to 0.3/0.3/0.4 = unreliable landmarks used. | 0.5/0.6/0.5 + reject frames whose landmarks do not fit a face shape. | `track/mediapipe.js`, `track/head.js` |
+| Tracking loss | Hard hide when 20% of face outside the frame; 300 ms hold then pop. | Presence fade (in 90 ms, hold 160 ms, out 240 ms); restart fresh after 0.5 s loss. | `track/filters.js` Presence |
+| Hands | 2D-only back-of-hand guess; hand detection on the mirrored canvas copy. | Detection on the camera frame; 3D world landmarks; per-finger nail normal carried along the joints; edge-on fade. | `nails.js` |
+| Models conflicting | "One extra model per frame" rule made nails/hair lag the video. | Per-model schedule on the same frame (face, hands: every frame; hair: every frame desktop / 2nd phone; necklace-only pose: every 3rd). | `studio.js` |
+| Runtime loading | WASM from cdn.jsdelivr.net (third party). | WASM self-hosted from node_modules (`scripts/copy-wasm.mjs`); models optionally self-hosted (`npm run fetch-models`, `VITE_MODEL_BASE`). | `track/mediapipe.js` |
+| Camera-to-canvas mapping, aspect ratio | Checked again: correct (canvas = video size, preview box takes the camera aspect ratio). | No change. | |
+
+---
+
+## Earlier audit (Update 4/5)
 
 Written from the actual source code of this project. "Fixed" means changed and tested here (on simulated data, see TESTING-REPORT.md);
 "Not fixed" means I found it and did not solve it.

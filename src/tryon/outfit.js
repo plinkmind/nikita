@@ -37,9 +37,39 @@ function drawCustom(c, B, st, img) {
   c.restore()
 }
 
-export function drawOutfit(c, B, state, customImg) {
-  if (!B || !state['o-custom']) return
-  drawCustom(c, B, state['o-custom'], customImg)
+// The garment is drawn on its own layer, then (1) the real light and fold shading of your body is blended into it (soft-light),
+// so it does not look like a flat sticker, and (2) forearms and hands that are IN FRONT of the body (closer to the camera than
+// the shoulders, from the body model's depth) are put back on top, so the garment does not cover an arm crossing the chest.
+let layer = null, gmask = null
+export function drawOutfit(c, B, state, customImg, T, raw, pose) {
+  if (!B || !state['o-custom'] || !customImg) return
+  layer = layer || document.createElement('canvas'); if (layer.width !== c.canvas.width || layer.height !== c.canvas.height) { layer.width = c.canvas.width; layer.height = c.canvas.height }
+  const L = layer.getContext('2d'); L.clearRect(0, 0, layer.width, layer.height)
+  drawCustom(L, B, state['o-custom'], customImg)
+  if (raw) {
+    // your real light and fold shading, blended into the garment's own colours (soft-light), then cut back to the garment shape
+    gmask = gmask || document.createElement('canvas'); if (gmask.width !== layer.width || gmask.height !== layer.height) { gmask.width = layer.width; gmask.height = layer.height }
+    const G = gmask.getContext('2d'); G.clearRect(0, 0, gmask.width, gmask.height); G.drawImage(layer, 0, 0)
+    L.save(); L.globalCompositeOperation = 'soft-light'; L.globalAlpha = 0.45; L.drawImage(raw, 0, 0); L.globalAlpha = 1; L.globalCompositeOperation = 'destination-in'; L.drawImage(gmask, 0, 0); L.restore()
+  }
+  c.drawImage(layer, 0, 0)
+  if (raw && pose) {
+    const sz = (pose[11].z + pose[12].z) / 2
+    ;[[13, 15, 19], [14, 16, 20]].forEach(([e, w, hi]) => { // elbow -> wrist -> hand
+      const E = pose[e], Wr = pose[w], Hd = pose[hi]
+      if (!(E.v > 0.5 && Wr.v > 0.5) || Wr.z > sz - B.sw * 0.15) return // only forearms clearly in front of the shoulders
+      const path = new Path2D(); path.moveTo(E.x, E.y); path.lineTo(Wr.x, Wr.y); if (Hd.v > 0.3) path.lineTo(Hd.x, Hd.y)
+      c.drawImage(armMask(c.canvas, path, B.sw * 0.2, raw), 0, 0)
+    })
+  }
+}
+let am = null
+function armMask(ref, path, width, raw) { // the real camera picture, cut to a thick rounded stroke along the forearm
+  am = am || document.createElement('canvas'); if (am.width !== ref.width || am.height !== ref.height) { am.width = ref.width; am.height = ref.height }
+  const x = am.getContext('2d'); x.clearRect(0, 0, am.width, am.height)
+  x.lineCap = 'round'; x.lineJoin = 'round'; x.lineWidth = width; x.strokeStyle = '#000'; x.stroke(path)
+  x.globalCompositeOperation = 'source-in'; x.drawImage(raw, 0, 0); x.globalCompositeOperation = 'source-over'
+  return am
 }
 
 // ---- clothing photo preparation: size limit, plain-background removal, trim ----
