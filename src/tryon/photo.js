@@ -46,7 +46,7 @@ export function initPhoto(box, hooks = {}) {
         <label class="ts-up">${S.garment ? 'Change garment' : 'Choose garment photo'}<input type="file" accept="image/png,image/jpeg,image/webp" data-ph-file="garment"${busy ? ' disabled' : ''}></label>${S.garment ? `<img class="ph-prev" src="${S.garment}" alt="Garment">` : ''}</div>`
       : `<div class="ts-opt"><span>2. Hairstyle</span><div class="ts-chips">${STYLES.map(([id, l]) => `<button class="chip${S.style === id ? ' on' : ''}" data-ph="style:${id}"${busy ? ' disabled' : ''}>${l}</button>`).join('')}</div></div>
          <div class="ts-opt"><label class="lk-pick" style="display:grid"><span style="font-size:12px;color:#D3CABD;letter-spacing:.08em;text-transform:uppercase">Hair colour</span><select data-ph-colour${busy ? ' disabled' : ''}>${COLOURS.map(([id, l]) => `<option value="${id}"${S.colour === id ? ' selected' : ''}>${l}</option>`).join('')}</select></label></div>`}
-      <label class="ph-consent"><input type="checkbox" data-ph-consent${S.consent ? ' checked' : ''}${busy ? ' disabled' : ''}><span>I agree to send my photo${S.mode === 'outfit' ? 's' : ''} to Glamify's server and to its AI provider${S.caps?.[S.mode]?.provider === 'fashn' ? ' (FASHN)' : ' (Google Cloud)'} to create this image. Glamify does not keep the photos, and the result is deleted after I get it (or after 10 minutes). The provider processes the photos under its own terms.</span></label>
+      <label class="ph-consent"><input type="checkbox" data-ph-consent${S.consent ? ' checked' : ''}${busy ? ' disabled' : ''}><span>I agree to send my photo${S.mode === 'outfit' ? 's' : ''} to Glamify's server and to its AI provider${({ fashn: ' (FASHN)', replicate: ' (Replicate)', google: ' (Google Cloud)' })[S.caps?.[S.mode]?.provider] || ''} to create this image. Glamify does not keep the photos, and the result is deleted after I get it (or after 10 minutes). The provider processes the photos under its own terms.</span></label>
       <div class="ts-row">${busy ? `<button class="chip on" disabled>AI is working... ${S.job.sec}s</button><button class="chip" data-ph="cancel">Cancel</button>` : `<button class="chip${ready() ? ' on' : ''}" data-ph="go"${ready() ? '' : ' disabled'}>Create AI try-on</button>`}</div>
       ${busy ? '<p class="ts-note">This usually takes 10 to 90 seconds on the server. The time shown is the real time elapsed, not an estimate of progress.</p>' : ''}
       ${S.err ? `<p class="ts-warn" role="alert">${esc(S.err)}</p>` : ''}
@@ -70,7 +70,7 @@ export function initPhoto(box, hooks = {}) {
         if (!S.job) return // cancelled
         const p = await (await fetch(`${API}/api/tryon/${j.jobId}`, { signal: ctl.signal })).json()
         if (p.status === 'done') { S.result = `data:${p.result.mimeType};base64,${p.result.base64}`; break }
-        if (p.status === 'error') throw new Error(p.error || 'The AI could not finish this try-on.')
+        if (p.status === 'error' || (!p.status && p.error)) throw new Error(p.error || 'The AI could not finish this try-on.')
         if (p.code === 'gone') throw new Error('The result is no longer available. Please try again.')
       }
       if (!S.result && S.job) throw new Error('This is taking too long. Please try again with a smaller photo.')

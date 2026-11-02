@@ -227,3 +227,39 @@ Read `FIX-REPORT.md` first (root causes, measured before/after), then `TESTING-R
 `TRYON_PROVIDER=fashn` and `FASHN_API_KEY=...` (see `server/.env.example`). Hairstyles still need the Google Cloud setup from
 section I. A server with only FASHN offers outfits and honestly reports hairstyles as not set up. Deploy the server as in section I
 (it runs anywhere Node 18+ runs; with FASHN only, no Google project is needed: e.g. Render, Railway, Fly.io or Cloud Run).
+
+---
+
+## L. Turn on AI Photo try-on (Netlify, no separate server) - Update 6.2
+The AI Photo tab now talks to a **Netlify Function** inside this same site (`netlify/functions/tryon.mjs`). You do not deploy any
+server. You only add API keys in Netlify. Until a key is added, the tab honestly says that mode is not set up.
+
+| Mode | Service | Key name in Netlify | Where to get it | Cost (check their pricing page) |
+|---|---|---|---|---|
+| AI outfits | FASHN tryon-v1.6 | `FASHN_API_KEY` | https://app.fashn.ai > API Keys (add credits first) | about $0.075 per image |
+| AI hairstyles | FLUX.1 Kontext [pro] on Replicate | `REPLICATE_API_TOKEN` | https://replicate.com/account/api-tokens (add billing first) | about $0.04 per image |
+
+1. Netlify > your site > **Site configuration > Environment variables > Add a variable**. Add `FASHN_API_KEY` and/or
+   `REPLICATE_API_TOKEN` (scope: at least "Functions"). Do **not** put them in `.env` files that go to GitHub.
+2. If you ever set `VITE_TRYON_API_URL`, delete it (empty = use this site's own function).
+3. Push the code (below). Netlify builds the site and the function automatically.
+4. Open the site > Try It On > **AI Photo** > **Check again**. Outfit and/or Hairstyle should now be available.
+5. Set a monthly spending limit in your FASHN and Replicate accounts (anyone who can open your site can use the button).
+
+Optional variables: `FASHN_MODE` (quality | balanced | performance), `REPLICATE_HAIR_MODEL`, `RATE_MAX` (tries per visitor per
+10 minutes, default 8), `ALLOWED_ORIGINS` (extra domains allowed to call the function).
+
+Test the function on your computer without keys (uses pretend services): `node tests/functions.test.mjs`.
+To try it locally with real keys: `npx netlify-cli dev` (reads keys from your Netlify site after `npx netlify-cli link`).
+
+The older Node server in `server/` (Google Cloud / FASHN) still works if you prefer a separate server; you do not need it on Netlify.
+
+### Update and deploy (every time)
+```
+npm install
+npm run build
+git add .
+git commit -m "Update 6.2: tracking fixes, photo jewellery, AI photo try-on via Netlify Functions"
+git push
+```
+`npm run build` is only a local check that everything compiles; Netlify runs its own build after `git push`.

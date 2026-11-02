@@ -18,6 +18,8 @@ output quality. Prices change; check the provider's pricing page before you rely
 **Decision:** the server supports two providers, chosen with `TRYON_PROVIDER`: `fashn` (recommended: dedicated try-on model, seconds instead of about a minute) or `google` (Vertex AI Virtual Try-On; retires 20 Jan 2027, model name is a setting). Neither has been run live from here (no keys); both are tested against mocks of their documented APIs.
 
 ## Hairstyle transformation
+**Update 6.2 (Netlify Function):** hairstyles use **FLUX.1 Kontext [pro]** (Black Forest Labs, text-instructed image editing) through Replicate's asynchronous API, chosen because it needs no Google Cloud project and fits a serverless function (start job, poll status). About $0.04 per image on Replicate. It is a general image editor: it usually keeps the face, but there is no identity guarantee. The Google Gemini path remains in `server/` for a separate server.
+
 Update 6: the style list now follows the reference sheets you sent (15 styles), and the instruction asks the model to keep the face, identity, earrings, clothing, background and light, with a natural hairline. Your before/after example (curly) is the quality target.
 
 I found no dedicated, commercially licensed hairstyle-transfer API that I could verify. Hairstyle research models exist, but I did not verify their licences, so I did not use them.
