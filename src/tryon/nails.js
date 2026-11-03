@@ -126,7 +126,7 @@ let layer = null, mask = null
 const canvasLike = (ref, cv) => { cv = cv || document.createElement('canvas'); if (cv.width !== ref.width || cv.height !== ref.height) { cv.width = ref.width; cv.height = ref.height } return cv }
 
 // hands: [{ P, Wd, right, alpha }] (camera pixels, not mirrored). raw: the mirrored camera picture. mirror: selfie view.
-export function drawNails(c, hands, state, T, raw, mirror) {
+export function drawNails(c, hands, state, T, raw, mirror, light = null) { // light: render/light.js estimate (moves the shine)
   const id = [...NAIL_IDS].find((k) => state[k]); if (!id || !hands.length) return
   const st = state[id], col = NAILS.find((p) => p.id === id).shades[st.shade].c, W = c.canvas.width
   layer = canvasLike(c.canvas, layer); mask = canvasLike(c.canvas, mask)
@@ -149,7 +149,9 @@ export function drawNails(c, hands, state, T, raw, mirror) {
         else {
           ctx.save(); ctx.clip(); design(ctx, id, col, L, hi * 7 + g.f + 1, T)
           if (st.finish === 'gloss') { // specular streak along the curved nail + darker side walls (the nail is a curved plate)
-            const hl = ctx.createLinearGradient(-0.5, 0, 0.5, 0)
+            // the shine sits on the side of the curved nail that faces the light: shift it across the nail by the light direction
+            const al = Math.hypot(ax, g.across.y) || 1, sh = light ? Math.max(-0.25, Math.min(0.25, ((light.dir.x * ax + light.dir.y * g.across.y) / al) * 0.3)) : 0
+            const hl = ctx.createLinearGradient(-0.5 + sh, 0, 0.5 + sh, 0)
             hl.addColorStop(0, 'rgba(0,0,0,.22)'); hl.addColorStop(0.18, 'rgba(0,0,0,0)'); hl.addColorStop(0.3, 'rgba(255,255,255,.0)'); hl.addColorStop(0.36, 'rgba(255,255,255,.5)'); hl.addColorStop(0.44, 'rgba(255,255,255,0)'); hl.addColorStop(0.82, 'rgba(0,0,0,0)'); hl.addColorStop(1, 'rgba(0,0,0,.25)')
             ctx.fillStyle = hl; ctx.fillRect(-0.5, 0.1, 1, L - 0.2)
           } else { const sd = ctx.createLinearGradient(-0.5, 0, 0.5, 0); sd.addColorStop(0, 'rgba(0,0,0,.18)'); sd.addColorStop(0.25, 'rgba(0,0,0,0)'); sd.addColorStop(0.75, 'rgba(0,0,0,0)'); sd.addColorStop(1, 'rgba(0,0,0,.2)'); ctx.fillStyle = sd; ctx.fillRect(-0.5, 0, 1, L) }

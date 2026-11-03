@@ -1,6 +1,25 @@
 # Tracking audit
 
-## Update 10 (latest): full re-audit, 3D face mask, category pipelines
+## Update 11 (latest): phases 1-5 of the approved AR plan
+Plan and audit: the "Glamify Mirror Me - AR System Audit" document. Every phase was tested on the scanned 3D test head
+(`tests/rig/`) and/or a real portrait photo, with the real MediaPipe models, in headless Chromium without a GPU.
+
+| Phase | What was done | Measured result | Kept? |
+|---|---|---|---|
+| 1. Phone measurement | `?debug` now shows a PHONE REPORT line: frame time p50 / p95 over the last 120 frames, camera fps, CPU cores, memory, GPU name (also in `window.__glamify.perf`) | works (sandbox: p50 570-720 ms, software GPU - meaningless for phones) | yes |
+| 2. Perspective head pose | Pinhole-camera fit (undo perspective, refit, project anchors with perspective), `tests/rig/persp.mjs` | **not better**: ear error median 0.45 cm flat vs 0.87 cm perspective (0.36 cm even with a re-fitted ear point); turn angle 2.6 -> 2.1 deg but nod 1.1 -> 1.5 deg. Face Landmarker's points behave like a flat projection | code kept, **switched off** (`FOCAL = 0`) |
+| 3. Segmentation masks | `render/masks.js`: one segmenter result -> hair mask + face occluder, refined with a guided filter against the camera picture, smoothed over time with the previous mask MOVED with the head (no ghost) and weighted less when the head moves. Makeup is put back to the real picture where hair, a hand or an accessory covers the face (eyes and brows excluded). Long hair stays in front of the garment | portrait: foundation no longer tints the hair strands over the forehead (`docs/test-results/hair-occlusion.jpg`); refinement 16 ms (computer size) / 12 ms (phone size) in the sandbox; first version left a hair-colour "ghost" when moving, fixed by moving the previous mask with the head | yes (`?occ=0` turns it off) |
+| 4. Light estimate | `render/light.js`: light direction from skin brightness vs. the 3D mask's surface directions (3 rounds, shadowed points and the brightest 8% shine left out), colour cast and exposure from the whole picture. Used by metal shading, jewellery colour, gloss and nail shine, 3D jewellery | direction error on the rig: **5.6 deg** average facing the camera (max 11.5), **17.5 deg** with the head turned 26 deg (max 21). Colour cast and exposure could not be checked: the rig's background is not lit by its lamp | yes |
+| 5. 3D jewellery (demo) | `render/jewellery3d.js` (Three.js, loaded only when a 3D piece is applied): 3D studs, hoops, jhumkas, gem drops and a pendant necklace built in code, metal + gem materials, room reflections, lit by the light estimate; face mesh + head shape in the depth buffer hide the far earring and let the chin cover the necklace; hanging pieces swing and hang with gravity. GLB product files supported (`model:` in the catalogue entry) | rig at front, turn 34 deg, turn -46 deg, nod 23 deg, tilt 20 deg: pieces stay on the lobes, the far earring is hidden behind the head when turned (`docs/test-results/3d-jewellery.jpg`) | yes, new "3D jewellery (demo)" group |
+| 6. Worker | not started: needs your phone's PHONE REPORT numbers first | - | - |
+
+Limits that remain: ear lobes and the neck are still estimated (no landmarks for them exist); no nail segmentation; the
+light estimate is a direction, not a full environment; the 3D pieces are demo designs until real GLB product models exist;
+nothing here was run on a phone.
+
+---
+
+## Update 10: full re-audit, 3D face mask, category pipelines
 Everything below was checked in the current source code and measured with the real MediaPipe models (headless Chromium,
 software rendering) on the 3D head-scan rig (`tests/rig/`: a scanned human head rendered at known turns, nods, tilts,
 distances and lighting, so the true position of every point is known).

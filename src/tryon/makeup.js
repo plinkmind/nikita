@@ -177,8 +177,9 @@ const DRAW = {
   gloss(c, M, s, v) {
     const { P, roll } = M, w = d(P[61], P[291])
     soft(c, [LIPS_OUT.map((i) => P[i]), LIPS_IN.map((i) => P[i])], s.c, w * 0.02, v * 0.3, 'overlay', 'evenodd')
-    soft(c, [ell(lerp(P[14], P[17], 0.55), w * 0.2, w * 0.045, roll)], '#ffffff', w * 0.04, v * 0.7, 'screen')
-    soft(c, [ell(lerp(P[0], P[13], 0.5), w * 0.12, w * 0.025, roll)], '#ffffff', w * 0.03, v * 0.4, 'screen')
+    const L = M.light, o = L ? { x: L.dir.x * w * 0.07, y: L.dir.y * w * 0.05 } : { x: 0, y: 0 } // shine moves toward the room light
+    soft(c, [ell(add(lerp(P[14], P[17], 0.55), o, 1), w * 0.2, w * 0.045, roll)], '#ffffff', w * 0.04, v * 0.7, 'screen')
+    soft(c, [ell(add(lerp(P[0], P[13], 0.5), o, 1), w * 0.12, w * 0.025, roll)], '#ffffff', w * 0.03, v * 0.4, 'screen')
   },
 }
 const lipLum = { t: 0, v: null }

@@ -1,5 +1,26 @@
 # Testing report
 
+## Update 11: AR phases 1-5
+
+Same environment as Update 10 (headless Chromium, software GPU, real MediaPipe models, scanned 3D test head + real portrait;
+no phone, no real camera, no GPU).
+
+| Test | Result |
+|---|---|
+| Phase 2, perspective vs flat head fit on the rig with webcam-like jitter (`node tests/rig/persp.mjs`) | flat fit is better for ear lobes (0.45 vs 0.87 cm median) - perspective switched off |
+| Head tracker unchanged (`node tests/rig/eval.mjs`, `npm run test:tracking`) | identical to Update 10 |
+| Phase 3, portrait: makeup with and without hair/face occlusion (`tests/run.mjs "test=occl"`) | hair strand over the forehead keeps its real colour; eyes and brows unaffected |
+| Phase 3, full studio with a moving portrait video, hair colour + makeup | no errors; a hair-colour ghost found in the first version (previous mask not moved with the head) - fixed and re-checked |
+| Phase 4, light direction on the rig, 7 lamps x 2 head turns (`tests/rig/run.mjs "test=lightest"`) | 5.6 deg average error facing the camera, 17.5 deg with the head turned 26 deg |
+| Phase 5, 3D jewellery on the rig at 5 poses (`tests/rig/run.mjs "test=look"` with j3-* products) | pieces on the lobes; far earring hidden behind the head when turned; hanging pieces hang with gravity when tilted |
+| Full studio category test incl. 3D jhumkas + 3D necklace (`tests/e2e/categories.e2e.mjs`) | pass: right models per category, 3D layer on, light estimate running, hand hints only on Nails, no console errors from the site |
+| Backend suite (backend unchanged) | 55/55 pass |
+
+**Not tested:** real phones (speed of the segmenter for occlusion, the WebGL mask and the 3D jewellery), real room lighting
+(colour cast and exposure of the light estimate), real people's ears and hair.
+
+---
+
 ## Update 10: AR tracking re-audit and 3D face mask
 
 **Environment:** headless Chromium, software GPU (SwiftShader), real MediaPipe models from `public/models`, fake camera made

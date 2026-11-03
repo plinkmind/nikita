@@ -7,8 +7,10 @@ import { PointSetFilter, Presence } from './track/filters.js'
 import { initPhoto } from './photo.js'
 import { drawMakeup, MESH_IDS } from './makeup.js'
 import { createFaceMesh } from './render/facemesh.js'
-import { JEWELLERY, drawJewellery, resetJewellery } from './jewellery.js'
-import { drawHairColour, buildHairMask, FACE_OVAL } from './hair.js'
+import { JEWELLERY, drawJewellery, resetJewellery, setJewelleryLight, neckFrame } from './jewellery.js'
+import { createLight } from './render/light.js'
+import { drawHairColour, FACE_OVAL } from './hair.js'
+import { createMasks, cutOccluders } from './render/masks.js'
 import { drawNails } from './nails.js'
 import { drawOutfit, bodyFrom, prepGarment, OUTFIT_IDS } from './outfit.js'
 import { ALL_PRODUCTS as ALL, CATEGORIES, groupsOf, findProduct, categoryOf, iconOf, needOf } from './catalog.js'
@@ -78,6 +80,14 @@ export function initStudio(hooks = {}) {
   const needs = () => { const n = new Set(); Object.keys(state).forEach((id) => { const p = findProduct(id); if (p) needOf(p).split('+').forEach((k) => n.add(k)) }); return n }
   const debugQ = new URLSearchParams(location.search), debug = debugQ.has('debug'), debugDraw = debug && debugQ.get('debug') !== 'stats' // ?debug: tracking diagnostics on screen (?debug=stats: numbers only, for tests)
   const stat = { fpsT: 0, camN: 0, cam: 0, detMs: 0, dup: 0, ms: { hand: 0, pose: 0, seg: 0 } }
+  // phone measurement (?debug): the last 120 processed frames, so the report shows typical (p50) and worst-case (p95) cost
+  const perf = { ring: new Float32Array(120), n: 0, gpu: null }
+  const perfSummary = () => {
+    const k = Math.min(perf.n, perf.ring.length); if (!k) return null
+    const v = Array.from(perf.ring.slice(0, k)).sort((a, b) => a - b), q = (f) => v[Math.min(k - 1, Math.floor(f * (k - 1)))]
+    if (perf.gpu === null) { try { const g = document.createElement('canvas').getContext('webgl'), e = g && g.getExtension('WEBGL_debug_renderer_info'); perf.gpu = (e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : g ? g.getParameter(g.RENDERER) : 'no WebGL') || '?'; g?.getExtension('WEBGL_lose_context')?.loseContext() } catch { perf.gpu = '?' } }
+    return { p50: +q(0.5).toFixed(1), p95: +q(0.95).toFixed(1), max: +v[k - 1].toFixed(1), frames: k, cores: navigator.hardwareConcurrency || 0, memGB: navigator.deviceMemory || 0, dpr: devicePixelRatio, gpu: String(perf.gpu).slice(0, 60) }
+  }
   let lastVT = -1, frameNo = 0, vfcFrames = 0, seenVfc = 0, lastNewAt = 0, budgetK = 1
   // New camera frames are detected with requestVideoFrameCallback where the browser has it (exact), otherwise from the video
   // clock. Some browsers update that clock coarsely; if it has not moved for 40 ms we treat the frame as new anyway, so tracking
@@ -126,9 +136,26 @@ export function initStudio(hooks = {}) {
     }
   }
   // ---- hair mask (segmentation), smoothed over time so its edge does not shimmer ----
-  const hairMask = document.createElement('canvas'), hairTint = document.createElement('canvas')
+  // one segmenter result -> refined hair mask + face occluder mask (render/masks.js), edge-aware and motion-aware
+  const masks = createMasks(phone), hairTint = document.createElement('canvas')
+  const occOff = debugQ.get('occ') === '0' // ?occ=0: makeup is not cut around hair / hands (for comparison)
+  // room light estimate (render/light.js), used by jewellery, nail and gloss shine and the 3D pieces
+  const light = createLight(), lightOn = () => Object.keys(state).some((id) => { const c = categoryOf(id); return c === 'jewellery' || c === 'nails' || id === 'gloss' })
+  const liveLight = () => (light.value.ok ? light.value : null)
+  // 3D jewellery (render/jewellery3d.js, Three.js): loaded only when a 3D piece is applied
+  const j3 = { r: null, mod: null, loading: false }
+  function draw3D(target, M, t) {
+    const ids = Object.keys(state).map(findProduct).filter((p) => p?.three); if (!ids.length) return
+    if (!j3.r) { if (!j3.loading && j3.r !== false) { j3.loading = true; import('./render/jewellery3d.js').then((m) => { j3.mod = m; j3.r = m.createJewellery3D() || false }).catch(() => { j3.r = false }).finally(() => { j3.loading = false }) } return }
+    const want = {}, size = {}
+    for (const p of ids) { const st = state[p.id]; want[p.slot] = { key: p.id, build: j3.mod.DEMO[p.three], col: p.shades[st.shade].c, hang: p.three !== 'stud', model: p.model, fwCm: 15.3 }; size[p.slot] = st.v }
+    j3.r.setPieces(want)
+    target.drawImage(j3.r.render(M, liveLight(), t, size, want.neck ? neckFrame(M, t) : null), 0, 0)
+  }
+  let segHead = null, nose = null // where the head was at the previous mask (the previous mask is moved with the head)
   function updateSeg(now) {
-    models.seg.t.segmentForVideo(vid, now, (r) => { const mk = r.categoryMask; if (mk) buildHairMask(mk.getAsUint8Array(), mk.width, mk.height, hairMask, cam.mirror) })
+    const c = nose, motion = c && segHead && M ? { dx: c.x - segHead.x, dy: c.y - segHead.y, rel: Math.hypot(c.x - segHead.x, c.y - segHead.y) / M.fw3 } : null
+    models.seg.t.segmentForVideo(vid, now, (r) => { const mk = r.categoryMask; if (mk) { masks.update(mk.getAsUint8Array(), mk.width, mk.height, raw, cam.mirror, motion); segHead = c ? { x: c.x, y: c.y } : null } })
   }
   function drawDebug(w, h, need) { // tracking diagnostics (add ?debug to the page address)
     octx.save()
@@ -138,10 +165,19 @@ export function initStudio(hooks = {}) {
     }
     octx.fillStyle = '#ff3b6b'; if (pose) pose.forEach((p) => p.v > 0.5 && octx.fillRect(p.x - 3, p.y - 3, 6, 6))
     octx.fillStyle = '#4da3ff'; hands.forEach((hd) => hd.P.forEach((p) => octx.fillRect((cam.mirror ? w - p.x : p.x) - 2, p.y - 2, 5, 5)))
-    const lines = [`camera ${stat.cam} fps | frame ${(stat.procMs || 0).toFixed(0)} ms (draw ${(stat.drawMs || 0).toFixed(0)}) | load-saving x${budgetK} | delegates: face ${tracker?.__delegate || '-'} hand ${models.hand?.t?.__delegate || '-'}`, `model ms: face ${stat.detMs.toFixed(1)} hand ${stat.ms.hand.toFixed(1)} pose ${stat.ms.pose.toFixed(1)} seg ${stat.ms.seg.toFixed(1)} | need: ${[...need].join(', ') || '-'}`, `face missed ${head.misses} | implausible readings rejected ${head.rejects}`, M ? `presence ${M.alpha.toFixed(2)} | in frame ${(M.inFrame * 100) | 0}% | turn ${(M.yaw * 57.3).toFixed(0)} deg | nod ${(M.pitch * 57.3).toFixed(0)} deg | roll ${(M.roll * 57.3).toFixed(0)} deg | ${M.cm.toFixed(1)} px/cm` : 'no face', `${out.width}x${out.height} | mirror ${cam.mirror}`]
+    const ps = perfSummary()
+    const lines = [ps ? `PHONE REPORT: frame p50 ${ps.p50} ms, p95 ${ps.p95} ms (camera ${stat.cam} fps) | ${ps.cores} cores ${ps.memGB || '?'} GB | ${ps.gpu}` : 'PHONE REPORT: measuring...', `camera ${stat.cam} fps | frame ${(stat.procMs || 0).toFixed(0)} ms (draw ${(stat.drawMs || 0).toFixed(0)}) | load-saving x${budgetK} | delegates: face ${tracker?.__delegate || '-'} hand ${models.hand?.t?.__delegate || '-'}`, `model ms: face ${stat.detMs.toFixed(1)} hand ${stat.ms.hand.toFixed(1)} pose ${stat.ms.pose.toFixed(1)} seg ${stat.ms.seg.toFixed(1)} | need: ${[...need].join(', ') || '-'}`, `face missed ${head.misses} | implausible readings rejected ${head.rejects}`, M ? `presence ${M.alpha.toFixed(2)} | in frame ${(M.inFrame * 100) | 0}% | turn ${(M.yaw * 57.3).toFixed(0)} deg | nod ${(M.pitch * 57.3).toFixed(0)} deg | roll ${(M.roll * 57.3).toFixed(0)} deg | ${M.cm.toFixed(1)} px/cm` : 'no face', `${out.width}x${out.height} | mirror ${cam.mirror}`]
     octx.font = `${Math.max(12, Math.round(h * 0.022))}px monospace`; octx.textAlign = 'left'
     lines.forEach((ln, i) => { const y = h - 8 - (lines.length - 1 - i) * Math.max(15, h * 0.026); octx.fillStyle = 'rgba(0,0,0,.65)'; octx.fillRect(4, y - Math.max(13, h * 0.022), octx.measureText(ln).width + 8, Math.max(16, h * 0.026)); octx.fillStyle = '#fff'; octx.fillText(ln, 8, y) })
     octx.restore()
+  }
+  // eyes and brows are never cut out of the makeup (segmenters often call brows and lashes "hair")
+  const KEEP = [[33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 145, 144, 163, 7], [263, 466, 388, 387, 386, 385, 384, 398, 362, 382, 381, 380, 374, 373, 390, 249], [46, 53, 52, 65, 55, 107, 66, 105, 63, 70], [276, 283, 282, 295, 285, 336, 296, 334, 293, 300]]
+  const preG = document.createElement('canvas'), rm = document.createElement('canvas')
+  function restoreMasked(c, src, mask, w, h, off = null) { // src pixels where mask is set, drawn over c
+    if (rm.width !== w || rm.height !== h) { rm.width = w; rm.height = h }
+    const x = rm.getContext('2d'); x.globalCompositeOperation = 'copy'; x.imageSmoothingEnabled = true; x.drawImage(mask, off?.x || 0, off?.y || 0, w, h); x.globalCompositeOperation = 'source-in'; x.drawImage(src, 0, 0); x.globalCompositeOperation = 'source-over'
+    c.drawImage(rm, 0, 0)
   }
   function restoreFace(c, M) { // put the real face back on top of clothes drawn over it (soft edge, no hard cut line)
     c.save(); c.beginPath(); FACE_OVAL.forEach((i, k) => (k ? c.lineTo(M.P[i].x, M.P[i].y) : c.moveTo(M.P[i].x, M.P[i].y))); c.closePath(); c.clip(); c.drawImage(raw, 0, 0); c.restore()
@@ -183,7 +219,7 @@ export function initStudio(hooks = {}) {
     catch (e) { say(describeError(e)); if (!cam.active) stopLoop(); return }
     running = true; dirty = true; say(''); sync(); loadTracker(); cancelAnimationFrame(raf); loop()
   }
-  function resetTracking() { head.reset(); head.presence.reset(); M = null; resetJewellery(); pose = null; poseFilter.reset(); posePresence.reset(); hands = []; Object.keys(handSlots).forEach((k) => delete handSlots[k]); lastVT = -1 }
+  function resetTracking() { masks.reset(); segHead = null; head.reset(); head.presence.reset(); M = null; resetJewellery(); pose = null; poseFilter.reset(); posePresence.reset(); hands = []; Object.keys(handSlots).forEach((k) => delete handSlots[k]); lastVT = -1 }
   function stopLoop() { running = false; cancelAnimationFrame(raf); resetTracking(); hint.hidden = true; sync() }
   function stop() {
     cam.stop(); stopLoop(); octx.clearRect(0, 0, out.width, out.height)
@@ -222,16 +258,24 @@ export function initStudio(hooks = {}) {
       // hands are also tracked (computers only) when face items are on, so a hand passing in front of the
       // face hides the makeup / earrings / necklace behind it instead of having them painted on top of the hand
       if (!phone && need.has('face') && Object.keys(state).some((id) => ['makeup', 'jewellery'].includes(categoryOf(id)))) need.add('handOcc')
-      ;['pose', 'hand', 'seg'].forEach((k) => (need.has(k) || (k === 'hand' && need.has('handOcc'))) && ensure(k, !need.has(k)))
+      // the segmenter also runs (quietly) for makeup, so hair strands and hands in front of the face are not painted over,
+      // and for outfits, so long hair in front of the garment stays on top
+      if (!occOff && Object.keys(state).some((id) => categoryOf(id) === 'makeup' || OUTFIT_IDS.has(id))) need.add('segOcc')
+      const wants = (k) => need.has(k) || (k === 'hand' && need.has('handOcc')) || (k === 'seg' && need.has('segOcc'))
+      ;['pose', 'hand', 'seg'].forEach((k) => wants(k) && ensure(k, !need.has(k)))
       // all models analyse the SAME frame that is drawn below
       if (tracker && need.has('face')) {
         const t0 = performance.now(); let lm = null
         try { lm = tracker.detectForVideo(vid, now).faceLandmarks[0] || null } catch { /* skipped frame */ }
         stat.detMs = stat.detMs * 0.9 + (performance.now() - t0) * 0.1
         M = head.update(lm, w, h, cam.mirror, now)
+        nose = lm ? { x: cam.mirror ? w - lm[168].x * w : lm[168].x * w, y: lm[168].y * h } : null // unsmoothed: exact frame-to-frame motion
+        if (M && lightOn()) light.update(M, raw, now)
       } else if (!need.has('face')) M = null
       for (const k of ['hand', 'pose', 'seg']) {
-        const m = models[k]; if (!(need.has(k) || (k === 'hand' && need.has('handOcc'))) || !m?.t) continue
+        const m = models[k]; if (!wants(k) || !m?.t) continue
+        // segmenter only for occlusion (no hair colour): every 2nd frame on computers, every 3rd on phones
+        if (k === 'seg' && !need.has('seg') && frameNo % ((phone ? 3 : 2) * budgetK)) continue
         // hands only for occlusion (no nails): every 3rd frame, every 6th while no hand has been seen for a second
         if (k === 'hand' && !need.has('hand') && frameNo % ((performance.now() - handSeenAt < 1000 ? 3 : 6) * budgetK)) continue
         if (k !== 'hand' && budgetK > 1 && frameNo % budgetK) continue
@@ -247,7 +291,9 @@ export function initStudio(hooks = {}) {
     const tDraw = performance.now()
     fctx.drawImage(raw, 0, 0)
     // draw, back to front: hair colour, your clothing photo, the real face on top of it, face items (makeup, jewellery), nails
-    if (need.has('seg')) drawHairColour(fctx, hairMask, hairTint, state, w, h, raw)
+    // the newest mask may be from an earlier frame (the segmenter does not run on every frame): move it with the head
+    const segOff = nose && segHead ? { x: nose.x - segHead.x, y: nose.y - segHead.y } : null
+    if (need.has('seg') && masks.hair) drawHairColour(fctx, masks.hair, hairTint, state, w, h, raw, segOff)
     let B = need.has('pose') ? bodyFrom(pose) : null
     // cross-check the body model against the face: shoulders must be below the chin and about 1.5 to 4.5 face widths apart.
     // A reading that fails (e.g. a close-up with the shoulders out of the picture) is not used, so nothing is drawn on the head.
@@ -257,18 +303,29 @@ export function initStudio(hooks = {}) {
       if (below < M.fh * 0.15 || ratio < 1.5 || ratio > 4.5) { B = null; stat.bodyRejected = (stat.bodyRejected || 0) + 1 }
     }
     const outfitOn = Object.keys(state).some((id) => OUTFIT_IDS.has(id))
-    if (outfitOn && B) { fctx.save(); fctx.globalAlpha = posePresence.a; drawOutfit(fctx, B, state, customImg, t, raw, pose, M); fctx.restore(); if (M) restoreFace(fctx, M) }
+    const occ = need.has('segOcc') && masks.hair
+    if (outfitOn && B) {
+      if (occ) { preG.width !== w && (preG.width = w); preG.height !== h && (preG.height = h); preG.getContext('2d').drawImage(fin, 0, 0) } // the picture before the garment
+      fctx.save(); fctx.globalAlpha = posePresence.a; drawOutfit(fctx, B, state, customImg, t, raw, pose, M); fctx.restore(); if (M) restoreFace(fctx, M)
+      if (occ) restoreMasked(fctx, preG, masks.hair, w, h, segOff) // hair hanging in front of the garment stays on top
+    }
     if (M) {
-      // face items fade together with tracking presence (no sudden pop in or out); a short miss keeps the last position
-      const target = M.alpha < 0.999 ? lctx : fctx
+      // face items fade together with tracking presence (no sudden pop in or out); a short miss keeps the last position.
+      // Makeup is drawn on a copy of the picture; what covers the face (hair, a hand) is then put back from the picture.
+      const makeupOn = Object.keys(state).some((id) => categoryOf(id) === 'makeup'), cut = occ && makeupOn
+      const target = M.alpha < 0.999 || cut ? lctx : fctx
       if (target === lctx) lctx.drawImage(fin, 0, 0)
+      M.light = liveLight()
       drawMakeup(target, M, state, raw, Object.keys(state).some((id) => MESH_IDS.has(id)) ? faceMesh() : null)
+      if (cut) cutOccluders(lctx, masks, FACE_OVAL.map((i) => M.P[i]), w, h, KEEP.map((ix) => ({ poly: ix.map((i) => M.P[i]), pad: M.fw * 0.03 })), fin, segOff)
       M.shoulders = B ? { l: B.l, r: B.r } : null
+      setJewelleryLight(liveLight())
       drawJewellery(target, M, state, t)
+      draw3D(target, M, t)
       if (target === lctx) { fctx.save(); fctx.globalAlpha = M.alpha; fctx.drawImage(lay, 0, 0); fctx.restore() }
     }
     if (hands.length && (need.has('handOcc') || outfitOn)) restoreHands(fctx, w)
-    if (need.has('hand')) drawNails(fctx, hands, state, t, raw, cam.mirror)
+    if (need.has('hand')) drawNails(fctx, hands, state, t, raw, cam.mirror, liveLight())
     // guidance
     const hm = note ? note : need.has('face') && tracker && !M ? 'Looking for your face... move into the frame'
       : tab === 'outfits' && outfitOn && models.pose?.t && !B ? 'Step back a little so your shoulders are in the frame'
@@ -277,9 +334,10 @@ export function initStudio(hooks = {}) {
     hint.hidden = !hm
     octx.drawImage(fin, 0, 0)
     stat.drawMs = (stat.drawMs || 0) * 0.9 + (performance.now() - tDraw) * 0.1; stat.procMs = (stat.procMs || 0) * 0.9 + (performance.now() - now) * 0.1
+    if (newFrame) { perf.ring[perf.n % perf.ring.length] = performance.now() - now; perf.n++ }
     // adaptive budget: if a frame takes longer than the camera interval, run the secondary models less often (never the face)
     if (frameNo % 15 === 0) budgetK = stat.procMs > (phone ? 50 : 38) ? Math.min(4, budgetK + 1) : stat.procMs < (phone ? 28 : 22) ? Math.max(1, budgetK - 1) : budgetK
-    if (debug) { if (debugDraw) drawDebug(w, h, need); window.__glamify = { models: Object.keys(models).filter((k) => models[k].t), need: [...need], hint: hint.hidden ? '' : hint.textContent, neck: M && M.shoulders !== undefined ? !!M.shoulders : null, frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), mesh: !!mesh && mesh.ok, hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
+    if (debug) { if (debugDraw) drawDebug(w, h, need); window.__glamify = { perf: perfSummary(), cam: stat.cam, models: Object.keys(models).filter((k) => models[k].t), need: [...need], hint: hint.hidden ? '' : hint.textContent, neck: M && M.shoulders !== undefined ? !!M.shoulders : null, frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), mesh: !!mesh && mesh.ok, j3: j3.r ? 'on' : j3.r === false ? 'failed' : 'off', light: light.value.ok ? { x: +light.value.dir.x.toFixed(2), y: +light.value.dir.y.toFixed(2), z: +light.value.dir.z.toFixed(2), contrast: +light.value.contrast.toFixed(2), tint: light.value.tint.map((v) => +v.toFixed(2)), bright: +light.value.bright.toFixed(2) } : null, hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
     if (compare) {
       const x = (w * split.value) / 100
       octx.save(); octx.beginPath(); octx.rect(0, 0, x, h); octx.clip(); octx.drawImage(raw, 0, 0); octx.restore()
@@ -442,7 +500,7 @@ export function initStudio(hooks = {}) {
     start() // runs from the tap on "Try It On", so the browser allows the camera prompt
   }
   function close() {
-    photo.hide(); cam.stop(); stopLoop(); releaseIdle(new Set(), performance.now(), true); if (mesh) { mesh.dispose(); mesh = undefined } root.hidden = true; document.body.classList.remove('studio-open')
+    photo.hide(); cam.stop(); stopLoop(); releaseIdle(new Set(), performance.now(), true); if (mesh) { mesh.dispose(); mesh = undefined } if (j3.r) { j3.r.dispose(); j3.r = null } light.reset(); root.hidden = true; document.body.classList.remove('studio-open')
     lastOpener?.focus?.({ preventScroll: true }); hooks.onClose?.()
   }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !root.hidden) close() })

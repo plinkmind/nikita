@@ -1,3 +1,10 @@
+# Update 11: AR plan phases 1-5
+Phone performance report in `?debug`; perspective head fit tried and measured (kept off: not more accurate); hair/face
+occlusion for makeup and hair over garments with edge-refined, motion-compensated masks; room light estimate for metal, gloss
+and nail shine; demo 3D jewellery (Three.js) with head occlusion. Details: `TRACKING-AUDIT.md` (Update 11), `TESTING-REPORT.md`.
+
+---
+
 # Update 10: AR tracking audit and 3D face mask
 Live studio only (the backend is unchanged). Skin makeup now uses a real 3D face mesh (WebGL) instead of flat shapes;
 category pipelines and loading notes fixed. Audit, measurements and limitations: `TRACKING-AUDIT.md` (Update 10) and

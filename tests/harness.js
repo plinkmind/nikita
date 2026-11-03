@@ -153,4 +153,31 @@ async function seg() {
     if (i === 2) { cv.width = W; cv.height = H; cx.drawImage(f, 0, 0); const id = cx.getImageData(0, 0, W, H); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const v = a[Math.floor(y * m.height / H) * m.width + Math.floor(x * m.width / W)]; if (v === 1) { const k = (y * W + x) * 4; id.data[k] = 255; id.data[k + 1] *= 0.4 } } cx.putImageData(id, 0, 0) } })
   window.__result = info; log(JSON.stringify(info))
 }
-;({ anchors, motion, nails, seg })[test]().catch((e) => { window.__result = { error: String(e && e.stack || e) }; log('ERROR', e && e.stack || e) })
+;({ anchors, motion, nails, seg, occl })[test]().catch((e) => { window.__result = { error: String(e && e.stack || e) }; log('ERROR', e && e.stack || e) })
+
+// Hair mask refinement + makeup occlusion on a real portrait: raw segmenter labels vs guided-filter mask, and makeup drawn
+// without / with the occlusion cut. Tiles: [raw mask] [refined mask] [makeup, no cut] [makeup, cut].
+import { createMasks, cutOccluders } from '../src/tryon/render/masks.js'
+import { drawMakeup } from '../src/tryon/makeup.js'
+import { createFaceMesh } from '../src/tryon/render/facemesh.js'
+import { FACE_OVAL } from '../src/tryon/hair.js'
+async function occl() {
+  const img = await load('./img/' + (q.get('img') || 'portrait.png')), W = 960, H = 720
+  const det = await createFaceTracker(), seg = await createSegmenter(), head = new HeadTracker(), masks = createMasks(false), mesh = createFaceMesh()
+  const f = frame(img, W, H, { tx: 0, ty: 0, r: 0, s: +(q.get('s') || 1) }, 0)
+  let M, labels, mw, mh
+  for (let i = 0; i < 8; i++) { M = head.update(det.detectForVideo(f, i * 33 + 1).faceLandmarks[0], W, H, false, i * 33 + 1); seg.segmentForVideo(f, i * 33 + 1, (r) => { const m = r.categoryMask; labels = m.getAsUint8Array().slice(); mw = m.width; mh = m.height }) }
+  let ms = 0; for (let k = 0; k < 6; k++) { const t0 = performance.now(); masks.update(labels, mw, mh, f, false, 0); ms = performance.now() - t0 } // steady state (after warm-up)
+  const masksP = createMasks(true); let msP = 0; for (let k = 0; k < 6; k++) { const t0 = performance.now(); masksP.update(labels, mw, mh, f, false, 0); msP = performance.now() - t0 }
+  const tile = 400, cxp = M.P[1].x, cyp = M.P[1].y - 40, sz = 520
+  cv.width = tile * 4; cv.height = tile
+  const put = (src, k) => cx.drawImage(src, cxp - sz / 2, cyp - sz / 2, sz, sz, k * tile, 0, tile, tile)
+  const tint = (maskCv, smooth) => { const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); x.drawImage(f, 0, 0); const m = document.createElement('canvas'); m.width = W; m.height = H; const mx = m.getContext('2d'); mx.imageSmoothingEnabled = smooth; mx.drawImage(maskCv, 0, 0, W, H); mx.globalCompositeOperation = 'source-in'; mx.fillStyle = 'rgba(255,0,90,0.55)'; mx.fillRect(0, 0, W, H); x.drawImage(m, 0, 0); return c }
+  const rawCv = document.createElement('canvas'); rawCv.width = mw; rawCv.height = mh; const rx = rawCv.getContext('2d'), id = rx.createImageData(mw, mh); labels.forEach((v, i) => { id.data[i * 4 + 3] = v === 1 ? 255 : 0 }); rx.putImageData(id, 0, 0)
+  put(tint(rawCv, false), 0); put(tint(masks.hair, true), 1)
+  const state = JSON.parse(q.get('state') || '{"foundation":{"shade":1,"v":0.7},"blush":{"shade":2,"v":0.9},"lipstick":{"shade":0,"v":0.8},"eyeliner":{"shade":0,"v":0.9},"brows":{"shade":0,"v":0.8}}')
+  const mk = (cut) => { const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); x.drawImage(f, 0, 0); const L = document.createElement('canvas'); L.width = W; L.height = H; drawMakeup(L.getContext('2d'), M, state, f, mesh); if (cut) cutOccluders(L.getContext('2d'), masks, FACE_OVAL.map((i) => M.P[i]), W, H, [[33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 145, 144, 163, 7], [263, 466, 388, 387, 386, 385, 384, 398, 362, 382, 381, 380, 374, 373, 390, 249], [46, 53, 52, 65, 55, 107, 66, 105, 63, 70], [276, 283, 282, 295, 285, 336, 296, 334, 293, 300]].map((ix) => ({ poly: ix.map((i) => M.P[i]), pad: M.fw * 0.03 }))); x.drawImage(L, 0, 0); return c }
+  put(mk(false), 2); put(mk(true), 3)
+  const hairPx = labels.reduce((n, v) => n + (v === 1), 0)
+  window.__result = { mw, mh, hairPx, refineMs: +ms.toFixed(1), work: masks.size, refineMsPhoneSize: +msP.toFixed(1), workPhone: masksP.size }
+}

@@ -1,5 +1,6 @@
 import { earVisibility, earAway, noseVisibility } from './track/head.js'
 import { FACE_OVAL } from './hair.js'
+import { lightCss } from './render/light.js'
 // Jewellery renderer: drawn as metal + gems, anchored to face landmarks and head roll / turn.
 const sh = (n, c) => ({ n, c })
 // canonical noseR = the person's LEFT nostril (canonical x is image-right in an un-mirrored camera)
@@ -26,7 +27,11 @@ export const JEWELLERY = [
   photo('p-kundan-necklace', 'Kundan necklace', '/products/demo/kundan-necklace.png', { kind: 'neck', wcm: 14.5, top: 3.4 }),
   photo('p-filigree-necklace', 'Gold filigree necklace', '/products/demo/filigree-necklace.png', { kind: 'neck', wcm: 12.5, top: 3.2 }),
   photo('p-gem-necklace', 'Gemstone leaf necklace', '/products/demo/gem-leaf-necklace.png', { kind: 'neck', wcm: 14, top: 5 }),
+  // 3D jewellery (render/jewellery3d.js): demo pieces built in code. A real product: same entry with model: '/products/x.glb'
+  three('j3-studs', '3D studs', 'ear', 'stud'), three('j3-hoops', '3D hoops', 'ear', 'hoop'), three('j3-jhumkas', '3D jhumkas', 'ear', 'jhumka'),
+  three('j3-drops', '3D gem drops', 'ear', 'drop'), three('j3-necklace', '3D pendant necklace', 'neck', 'necklace'),
 ]
+function three(id, label, slot, build, model) { return { id, label, v: 0.5, shades: METALS, three: build, slot, model, excl: slot === 'ear' ? 'ear3d' : 'neck3d', need: slot === 'neck' ? 'face+pose' : 'face' } }
 function photo(id, label, src, o) { return { id, label, v: 0.5, image: src, src, shades: [sh('As photographed', '#E2BE7C')], need: o.kind === 'neck' ? 'face+pose' : 'face', excl: o.kind === 'ear' ? 'earring' : undefined, ...o } }
 const IMG = {}
 const imgOf = (p) => { let i = IMG[p.id]; if (!i) { i = IMG[p.id] = new Image(); i.decoding = 'async'; i.src = (import.meta.env.BASE_URL || '/') + p.src.replace(/^\//, '') } return i.complete && i.naturalWidth ? i : null }
@@ -36,7 +41,18 @@ const withShadow = (c, cm, fn) => { c.save(); c.shadowColor = 'rgba(30,18,10,.38
 
 const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
 const mix = (a, b, t) => { const x = rgb(a), y = rgb(b); return `rgb(${x.map((v, i) => Math.round(v + (y[i] - v) * t)).join(',')})` }
-const metal = (c, col, r) => { const g = c.createLinearGradient(-r, -r, r, r); g.addColorStop(0, mix(col, '#000000', 0.35)); g.addColorStop(0.45, mix(col, '#ffffff', 0.6)); g.addColorStop(1, mix(col, '#000000', 0.2)); return g }
+// Metal shading follows the estimated room light (render/light.js): the bright side of every piece faces where the light comes
+// from. The light direction is in picture space; the drawing context may be rotated (pieces turn with the head), so the
+// direction is turned back into the piece's own coordinates first.
+let LIGHT = null
+export const setJewelleryLight = (L) => { LIGHT = L }
+const metal = (c, col, r) => {
+  let lx = -0.5, ly = -0.85
+  if (LIGHT) { const l = Math.hypot(LIGHT.dir.x, LIGHT.dir.y); if (l > 0.05) { lx = LIGHT.dir.x / l; ly = LIGHT.dir.y / l } }
+  const m = c.getTransform(), det = m.a * m.d - m.b * m.c || 1, ux = (m.d * lx - m.c * ly) / det, uy = (-m.b * lx + m.a * ly) / det, ul = Math.hypot(ux, uy) || 1
+  const g = c.createLinearGradient((-ux / ul) * r, (-uy / ul) * r, (ux / ul) * r, (uy / ul) * r) // from the shadow side to the lit side
+  g.addColorStop(0, mix(col, '#000000', 0.35)); g.addColorStop(0.62, mix(col, '#ffffff', 0.6)); g.addColorStop(1, mix(col, '#ffffff', 0.15)); return g
+}
 const circle = (c, x, y, r, fill) => { c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fillStyle = fill; c.fill() }
 
 function gem(c, x, y, r, T, tint = '#ffffff') {
@@ -58,7 +74,7 @@ const at = (c, x, y, rot, fn) => { c.save(); c.translate(x, y); c.rotate(rot); f
 // cannot jump to the cheek, mouth or nose. Each ear is handled independently: an ear that turns away behind the head fades
 // out (its own visibility), and an ear outside the picture is simply not drawn. Earrings hang under gravity and swing.
 const swing = { lobeL: { a: 0, v: 0, x: null, t: 0, vis: 0 }, lobeR: { a: 0, v: 0, x: null, t: 0, vis: 0 } }
-export function resetJewellery() { Object.values(swing).forEach((s) => Object.assign(s, { a: 0, v: 0, x: null, vis: 0 })); Object.assign(NF, { w: 0, body: null, rot: 0, t: null }) }
+export function resetJewellery() { Object.values(swing).forEach((s) => Object.assign(s, { a: 0, v: 0, x: null, vis: 0 })); Object.assign(NF, { w: 0, body: null, rot: 0, t: null, last: null }) }
 const EARS = (M, T) => ['lobeL', 'lobeR'].map((name) => {
   const e = M.project(name), s = swing[name], dt = Math.min(0.05, Math.max(0.001, T - s.t))
   const vx = s.x === null ? 0 : (e.x - s.x) / Math.max(0.001, T - s.t)
@@ -129,6 +145,7 @@ const nose = (c, M, id, col, u, T, side) => {
 //    reading more than 6 cm from the head estimate (a wrong detection) is not used.
 const NF = { w: 0, body: null, rot: 0, t: null }
 export function neckFrame(M, T) {
+  if (NF.t === T && NF.last) return NF.last // once per frame, shared by the 2D and the 3D necklaces
   const dt = NF.t === null ? 1 : Math.min(0.2, Math.max(0, T - NF.t)); NF.t = T
   const head = M.projectPartial ? M.projectPartial('neck', 0.5) : M.project('neck'), S = M.shoulders
   let target = 0
@@ -139,7 +156,7 @@ export function neckFrame(M, T) {
   }
   NF.w += (target - NF.w) * (1 - Math.exp(-dt * 8))
   const w = NF.body ? NF.w : 0, hr = M.roll * 0.35
-  return { o: { x: head.x + ((NF.body?.x ?? 0) - head.x) * w, y: head.y + ((NF.body?.y ?? 0) - head.y) * w }, rot: hr + (NF.rot - hr) * w }
+  return (NF.last = { o: { x: head.x + ((NF.body?.x ?? 0) - head.x) * w, y: head.y + ((NF.body?.y ?? 0) - head.y) * w }, rot: hr + (NF.rot - hr) * w })
 }
 let NECK = null // this frame's neck frame (computed once, used by every necklace)
 function neck(c, M, id, col, u, T) {
@@ -186,7 +203,23 @@ function faceCut(c, M) {
   c.save(); c.globalCompositeOperation = 'destination-out'; c.beginPath()
   FACE_OVAL.forEach((i, k) => (k ? c.lineTo(M.P[i].x, M.P[i].y) : c.moveTo(M.P[i].x, M.P[i].y))); c.closePath(); c.fill(); c.restore()
 }
-export function drawJewellery(c, M, state, T) {
+// Everything 2D is drawn on its own layer, then given the colour and brightness of the room light (a warm lamp makes the metal
+// warmer, a dim room makes it dimmer), then put on the picture.
+let JL = null, JT = null
+export function drawJewellery(c0, M, state, T) {
+  if (!JEWELLERY.some((j) => state[j.id] && !j.three)) return
+  const W = c0.canvas.width, H = c0.canvas.height
+  JL = JL || document.createElement('canvas'); if (JL.width !== W || JL.height !== H) { JL.width = W; JL.height = H }
+  const c = JL.getContext('2d'); c.clearRect(0, 0, W, H)
+  drawJewellery2D(c, M, state, T)
+  if (LIGHT?.ok) {
+    JT = JT || document.createElement('canvas'); if (JT.width !== W || JT.height !== H) { JT.width = W; JT.height = H }
+    const t = JT.getContext('2d'); t.globalCompositeOperation = 'copy'; t.fillStyle = lightCss(LIGHT); t.fillRect(0, 0, W, H); t.globalCompositeOperation = 'destination-in'; t.drawImage(JL, 0, 0); t.globalCompositeOperation = 'source-over'
+    c.save(); c.globalCompositeOperation = 'multiply'; c.drawImage(JT, 0, 0); c.restore()
+  }
+  c0.drawImage(JL, 0, 0)
+}
+function drawJewellery2D(c, M, state, T) {
   const col = (id) => JEWELLERY.find((j) => j.id === id).shades[state[id].shade].c
   const U = (id) => M.fw3 * (0.6 + state[id].v * 0.8) // true head width (pixels per cm x 15.3 cm): keeps real size when the head turns
   if (state.tiara) tiara(c, M, col('tiara'), U('tiara'), T)

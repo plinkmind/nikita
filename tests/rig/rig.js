@@ -139,6 +139,9 @@ tests.record = record
 import { drawMakeup } from '../../src/tryon/makeup.js'
 import { drawJewellery, resetJewellery } from '../../src/tryon/jewellery.js'
 import { createFaceMesh } from '../../src/tryon/render/facemesh.js'
+import { createJewellery3D, DEMO } from '../../src/tryon/render/jewellery3d.js'
+import { createLight as mkLight } from '../../src/tryon/render/light.js'
+import { setJewelleryLight, neckFrame as nf, JEWELLERY as JW } from '../../src/tryon/jewellery.js'
 async function look() {
   const R = await createRig(), det = await createFaceTracker(), mesh = q.get('mesh') === '0' ? null : createFaceMesh()
   const poses = JSON.parse(q.get('poses') || '[{"yaw":0},{"yaw":0.5},{"yaw":-0.7},{"pitch":0.35},{"roll":0.3,"x":5}]')
@@ -154,7 +157,18 @@ async function look() {
     if (M && k === 0) { M.shoulders = null; drawJewellery(fx, M, state, 0); await new Promise((r) => setTimeout(r, 1500)); fx.drawImage(nc, 0, 0) } // let product photos load
     const base = fx.getImageData(0, 0, R.W, R.H).data
     const t0 = performance.now()
-    if (M) { drawMakeup(fx, M, state, nc, mesh); M.shoulders = null; drawJewellery(fx, M, state, t / 1000) }
+    if (M) {
+      const lt = mkLight(); const Lv = lt.update(M, nc, 1e9, 0); setJewelleryLight(q.get('light') === '0' ? null : Lv); M.light = Lv
+      drawMakeup(fx, M, state, nc, mesh); M.shoulders = null; drawJewellery(fx, M, state, t / 1000)
+      const threeIds = Object.keys(state).filter((id) => JW.find((j) => j.id === id)?.three)
+      if (threeIds.length) {
+        look.j3 = look.j3 || createJewellery3D(); const want = {}, size = {}
+        threeIds.forEach((id) => { const p = JW.find((j) => j.id === id); want[p.slot] = { key: id, build: DEMO[p.three], col: p.shades[state[id].shade].c, hang: p.three !== 'stud', fwCm: 15.3 }; size[p.slot] = state[id].v })
+        look.j3.setPieces(want); for (let w2 = 0; w2 < 3; w2++) look.j3.render(M, Lv, t / 1000 + w2, size, want.neck ? nf(M, t / 1000 + w2) : null) // let the swing settle
+        fx.drawImage(look.j3.canvas, 0, 0)
+      }
+      res.light = Lv
+    }
     const drawMs = performance.now() - t0
     // paint that landed on the BACKGROUND (outside the head): must be zero for a mask that stays on the face
     const now = fx.getImageData(0, 0, R.W, R.H).data, bg = [base[0], base[1], base[2]]; let changed = 0, spill = 0
@@ -196,4 +210,22 @@ async function video() {
 }
 tests.video = video
 
-tests[test]().catch((e) => { window.__result = { error: String(e && e.stack || e) } })
+queueMicrotask(() => tests[test]().catch((e) => { window.__result = { error: String(e && e.stack || e) } })) // after every test below is registered
+
+// ---------- light estimate (render/light.js) against the rig's known key light ----------
+import { createLight } from '../../src/tryon/render/light.js'
+async function lightest() {
+  const R = await createRig(), det = await createFaceTracker(), res = []; let t = 0, nc = null
+  const cases = [{ side: -1.2 }, { side: -0.6 }, { side: 0 }, { side: 0.6 }, { side: 1.2 }, { side: 0.6, colour: '#ffb070' }, { side: 0.6, intensity: 0.3, ambient: 0.35 }]
+  for (const yaw of [0, 0.45]) for (const L of cases) {
+    const head = new HeadTracker(), light = createLight(); let M = null, est = null
+    R.light(L); R.pose({ dist: 60, yaw })
+    for (let i = 0; i < 8; i++) { const img = R.render(); nc = addNoise(img, 2, nc); t += 33.3; M = head.update(det.detectForVideo(nc, t).faceLandmarks[0] || null, R.W, R.H, false, t); if (M) est = light.update(M, nc, t, 0) }
+    const tl = Math.hypot(L.side, 0.8, 1), truth = { x: L.side / tl, y: -0.8 / tl, z: 1 / tl }
+    const ang = est ? Math.acos(Math.max(-1, Math.min(1, est.dir.x * truth.x + est.dir.y * truth.y + est.dir.z * truth.z))) * 57.3 : null
+    const h2 = (a) => Math.atan2(a.x, a.z) * 57.3 // left-right angle only
+    res.push({ yaw, light: L, est: est && { x: +est.dir.x.toFixed(2), y: +est.dir.y.toFixed(2), z: +est.dir.z.toFixed(2), contrast: +est.contrast.toFixed(2), tint: est.tint.map((v) => +v.toFixed(2)), bright: +est.bright.toFixed(2) }, truth: { x: +truth.x.toFixed(2), y: +truth.y.toFixed(2), z: +truth.z.toFixed(2) }, angleErrDeg: ang && +ang.toFixed(1), sideTrueDeg: +h2(truth).toFixed(0), sideEstDeg: est && +h2(est.dir).toFixed(0) })
+  }
+  window.__result = res
+}
+tests.lightest = lightest

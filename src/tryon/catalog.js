@@ -23,6 +23,7 @@ export const CATEGORIES = {
       { name: 'Nose rings', ids: ['nosering', 'nosepin'] },
       { name: 'Head jewellery', ids: ['tiara'] },
       { name: 'Product photos (demo)', ids: ['p-kundan-jhumka', 'p-kundan-necklace', 'p-filigree-necklace', 'p-gem-necklace'] },
+      { name: '3D jewellery (demo)', ids: ['j3-studs', 'j3-hoops', 'j3-jhumkas', 'j3-drops', 'j3-necklace'] },
     ],
   },
 }

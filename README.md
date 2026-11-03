@@ -317,3 +317,18 @@ What changed for you (nothing to set up):
 
 Compare old and new on your phone: open `https://your-site/?mesh=0` (old 2D drawing) and the normal address (3D mask).
 Full audit and measurements: `TRACKING-AUDIT.md`, `TESTING-REPORT.md`.
+
+---
+
+## Q. Update 11: AR improvements (phases 1-5 of the audit plan)
+
+- **Makeup respects your hair and hands:** a strand of hair or a hand in front of the face is no longer painted over.
+- **Light-aware shine:** jewellery, lip gloss and nail polish take their shine from where the room light comes from, and
+  jewellery takes on the colour of warm or cool light.
+- **3D jewellery (demo):** Jewellery tab > "3D jewellery (demo)": studs, hoops, jhumkas, gem drops and a pendant necklace,
+  real 3D metal and gems that turn with your head and hide behind it. To use your own product later, export it as a GLB file
+  (in centimetres, the ear hole or neck centre at the origin, hanging down), put it in `public/products/`, and add an entry
+  in `src/tryon/jewellery.js` with `model: '/products/your-file.glb'`.
+- **Phone report for Phase 6:** open `https://glamifyxr.netlify.app/?debug`, start Try It On, apply makeup + earrings, and send
+  a screenshot of the PHONE REPORT line (frame time and GPU). That decides whether the AI models move to a background worker.
+- Turn things off to compare: `?occ=0` (no hair/hand occlusion), `?mesh=0` (2D makeup).

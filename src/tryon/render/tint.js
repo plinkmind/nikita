@@ -31,7 +31,7 @@ export function tintRegion(c, mask, col, strength, lum, w, h, opts = {}) {
   const layer = (fill, mode, alpha) => {
     x.globalCompositeOperation = 'copy'; x.fillStyle = fill; x.fillRect(0, 0, L.width, L.height)
     x.globalCompositeOperation = 'destination-in'; x.drawImage(mask, 0, 0)
-    c.save(); c.globalCompositeOperation = mode; c.globalAlpha = alpha; c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high'; c.drawImage(L, 0, 0, w, h); c.restore()
+    c.save(); c.globalCompositeOperation = mode; c.globalAlpha = alpha; c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high'; c.drawImage(L, opts.dx || 0, opts.dy || 0, w, h); c.restore()
   }
   if (lum != null && lum > 0.02) {
     const g = (v) => { const q = Math.round(Math.max(0, Math.min(1, v)) * 255); return `rgb(${q},${q},${q})` }

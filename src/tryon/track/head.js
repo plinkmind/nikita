@@ -20,6 +20,8 @@ const STABLE = [33, 133, 362, 263, 130, 359, 168, 6, 197, 195, 5, 4, 10, 151, 9,
 const C = (i) => [CANON[i * 3], CANON[i * 3 + 1], CANON[i * 3 + 2]]
 const CANON_STABLE = STABLE.map(C)
 const CANON_ALL = Array.from({ length: 468 }, (_, i) => C(i))
+const CANON_C = [0, 1, 2].map((k) => CANON_STABLE.reduce((t, p) => t + p[k], 0) / CANON_STABLE.length) // centre of the rigid points
+const IRIS_AT = [159, 159, 159, 159, 159, 386, 386, 386, 386, 386] // iris points (468-477) take the depth of their eye
 const FACE_WIDTH_CM = 15.32 // canonical distance 234 <-> 454
 
 // Anchor points on the canonical head (centimetres, x = image right, y = up, z = toward camera) with an outward normal
@@ -45,8 +47,17 @@ export const ANCHORS = {
 export const RIGID = { pos: [1, 45], rot: [1, 30], scale: [1, 45] }
 export const SHAPE = { minCutoff: 2.0, beta: 0.15, dCutoff: 1 } // units: canonical cm
 
+// Perspective (optional, OFF by default). A pinhole camera shows a point 5 cm behind the face (an ear lobe) closer to the
+// picture centre than a flat ("weak-perspective") head model does. Measured on the 3D head rig (tests/rig/persp.mjs), a
+// perspective fit did NOT place ear lobes better: median ear error 0.45 cm flat vs 0.87 cm perspective with today's anchor and
+// 0.36 cm even after re-fitting the anchor for it, because Face Landmarker's points themselves behave close to a flat
+// projection. Head-turn angle improved (2.6 -> 2.1 deg) but nod got worse (1.1 -> 1.5 deg). So the flat model stays; FOCAL
+// (focal length / longer frame side, e.g. 0.75) switches the perspective model on for future tests.
+export const FOCAL = 0
+
 export class HeadTracker {
-  constructor(rigid = RIGID, shape = SHAPE) {
+  constructor(rigid = RIGID, shape = SHAPE, focal = FOCAL) {
+    this.focal = focal
     this.fp = [0, 1, 2].map(() => new OneEuro(...rigid.pos, 1))
     this.fq = [0, 1, 2, 3].map(() => new OneEuro(...rigid.rot, 1))
     this.fs = new OneEuro(...rigid.scale, 1)
@@ -62,7 +73,15 @@ export class HeadTracker {
     let ok = false
     if (lm && lm.length >= 468) {
       const u = lm.map((q) => [q.x * W, q.y * H, (q.z || 0) * W]) // camera pixels; depth uses the x scale (MediaPipe convention)
-      const raw = fitSimilarity(CANON_STABLE, STABLE.map((i) => u[i]))
+      let raw = fitSimilarity(CANON_STABLE, STABLE.map((i) => u[i]))
+      if (this.focal && raw.s > 0) { // undo perspective with the fitted depth of every point, then fit again (2 rounds)
+        const f = this.focal * Math.max(W, H), cx = W / 2, cy = H / 2
+        for (let it = 0; it < 2; it++) {
+          const zr = apply(raw, CANON_C)[2]
+          for (let i = 0; i < u.length; i++) { const q = lm[i], k = (f + apply(raw, CANON_ALL[i < 468 ? i : IRIS_AT[i - 468]])[2] - zr) / f; u[i][0] = cx + (q.x * W - cx) * k; u[i][1] = cy + (q.y * H - cy) * k }
+          raw = fitSimilarity(CANON_STABLE, STABLE.map((i) => u[i]))
+        }
+      }
       const rel = raw.rms / raw.s // residual in canonical cm: big when the landmarks do not form a plausible face
       if (Number.isFinite(rel) && rel < 0.9 && raw.s > 0) {
         if (this.presence.stale(now, 500)) this.reset() // back after a real loss: start fresh instead of sliding from the old place
@@ -97,7 +116,10 @@ export class HeadTracker {
 
   _output(W, H, mirror) {
     const fit = this.fit, mx = (x) => (mirror ? W - x : x)
-    const P = this.local.map((q) => { const p = apply(fit, [q.x, q.y, q.z]); return { x: mx(p[0]), y: p[1], z: p[2] } })
+    // weak-perspective point -> camera picture: nearer points spread out from the picture centre, farther ones move in
+    const f = this.focal ? this.focal * Math.max(W, H) : 0, cx = W / 2, cy = H / 2, zr = apply(fit, CANON_C)[2]
+    const persp = (p) => { if (!f) return [p[0], p[1], p[2], 1]; const k = f / Math.max(f * 0.3, f + p[2] - zr); return [cx + (p[0] - cx) * k, cy + (p[1] - cy) * k, p[2], k] }
+    const P = this.local.map((q) => { const p = persp(apply(fit, [q.x, q.y, q.z])); return { x: mx(p[0]), y: p[1], z: p[2] } })
     const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
     // head axes in the picture (display space)
     const fwd = rotate(fit.R, [0, 0, 1]), up3 = rotate(fit.R, [0, 1, 0])
@@ -106,17 +128,17 @@ export class HeadTracker {
     const upL = Math.hypot(up3[0], up3[1]) || 1
     let a = P[33], b = P[263]; if (a.x > b.x) [a, b] = [b, a]
     const project = (name) => {
-      const A = ANCHORS[name], p = apply(fit, A.p), n = rotate(fit.R, A.n)
-      return { x: mx(p[0]), y: p[1], z: p[2], facing: -n[2] } // facing > 0: surface turned toward the camera
+      const A = ANCHORS[name], p = persp(apply(fit, A.p)), n = rotate(fit.R, A.n)
+      return { x: mx(p[0]), y: p[1], z: p[2], k: p[3], facing: -n[2] } // facing > 0: surface turned toward the camera; k: size factor vs the face
     }
     // like project(), but with only a fraction `beta` of the head's rotation away from facing the camera (for points that sit
     // below the head, on the neck/chest, which turn less than the head does)
     const projectPartial = (name, beta) => {
-      const A = ANCHORS[name], Rb = matMul(rotFraction(matMul(fit.R, BASE), beta), BASE), p = apply({ s: fit.s, R: Rb, t: fit.t }, A.p)
+      const A = ANCHORS[name], Rb = matMul(rotFraction(matMul(fit.R, BASE), beta), BASE), p = persp(apply({ s: fit.s, R: Rb, t: fit.t }, A.p))
       return { x: mx(p[0]), y: p[1], z: p[2] }
     }
     Object.assign(this.M, {
-      P, W, H, fit, mirror, project, projectPartial,
+      P, W, H, fit, mirror, project, projectPartial, persp, focal: f,
       fw: dist(P[234], P[454]), fh: dist(P[10], P[152]),
       cm: fit.s,                        // pixels per centimetre at the face: true size, does not shrink when the head turns
       fw3: fit.s * FACE_WIDTH_CM,       // true face width in pixels
@@ -158,4 +180,4 @@ function matToQuat(R) {
 function quatToMat([w, x, y, z]) {
   return [[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)], [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)], [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]]
 }
-export { CANON_ALL, clamp }
+export { CANON_ALL, CANON_C, clamp }

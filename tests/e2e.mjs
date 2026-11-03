@@ -6,7 +6,7 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
 const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, permissions: ['camera'] })
 const page = await ctx.newPage()
 const errors = []; page.on('pageerror', (e) => errors.push('pageerror: ' + e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/XNNPACK|TensorFlow/.test(m.text())) errors.push(m.text()) })
-await page.goto('http://localhost:5199/' + (process.env.NODEBUG ? '' : '?debug'))
+await page.goto('http://localhost:5199/' + (process.env.NODEBUG ? '' : process.env.Q || '?debug'))
 await page.waitForTimeout(1500)
 await page.evaluate(() => document.querySelector('[data-tryon]').click())
 await page.waitForFunction(() => window.__glamify && window.__glamify.frames > 5, null, { timeout: 120000 }).catch(() => {})
