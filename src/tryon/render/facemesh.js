@@ -12,24 +12,13 @@
 // The camera picture and the mesh use the same coordinates (canvas pixels of the camera frame, mirrored for the selfie view),
 // so there is no separate 3D camera to keep in sync. If WebGL is not available the studio falls back to the 2D renderer.
 import { FACE_TRI, FACE_UV } from '../track/facemesh.js'
-import { CANON } from '../track/canonical.js'
+import { FACE_NORMALS } from '../track/normals.js'
 import { rotate } from '../track/geometry.js'
 
 const N = 468
 
-// outward surface normal of every vertex of the canonical face (computed once). Rotated by the head pose each frame.
-const NORMALS = (() => {
-  const n = new Float32Array(N * 3)
-  for (let t = 0; t < FACE_TRI.length; t += 3) {
-    const i = FACE_TRI[t] * 3, j = FACE_TRI[t + 1] * 3, k = FACE_TRI[t + 2] * 3
-    const u = [CANON[j] - CANON[i], CANON[j + 1] - CANON[i + 1], CANON[j + 2] - CANON[i + 2]]
-    const v = [CANON[k] - CANON[i], CANON[k + 1] - CANON[i + 1], CANON[k + 2] - CANON[i + 2]]
-    const x = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
-    for (const a of [i, j, k]) { n[a] += x[0]; n[a + 1] += x[1]; n[a + 2] += x[2] }
-  }
-  for (let a = 0; a < n.length; a += 3) { const l = Math.hypot(n[a], n[a + 1], n[a + 2]) || 1; n[a] /= l; n[a + 1] /= l; n[a + 2] /= l }
-  return n
-})()
+// outward surface normal of every vertex of the canonical face (track/normals.js). Rotated by the head pose each frame.
+const NORMALS = FACE_NORMALS
 
 const VS = `
 attribute vec3 aPos; attribute vec2 aUv; attribute float aFace;

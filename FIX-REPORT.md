@@ -1,3 +1,9 @@
+# Update 12: face tracking and 3D face mesh (Step 2)
+Missed-frame prediction, jump guard against wrong detections, faster-reacting smoothing, named face anchors
+(ears, eyes, brows, nose, lips, cheeks, jaw...) shown in `?debug`. Measurements: `TRACKING-AUDIT.md` Update 12.
+
+---
+
 # Update 11: AR plan phases 1-5
 Phone performance report in `?debug`; perspective head fit tried and measured (kept off: not more accurate); hair/face
 occlusion for makeup and hair over garments with edge-refined, motion-compensated masks; room light estimate for metal, gloss

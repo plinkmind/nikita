@@ -12,6 +12,7 @@
 //     They are positioned ONLY through the fitted head transform, never by borrowing a nearby landmark, so they cannot
 //     jump to the cheek, mouth or nose. Their visibility comes from the fitted 3D rotation.
 import { CANON } from './canonical.js'
+import { FACE_NORMALS } from './normals.js'
 import { fitSimilarity, apply, rotate } from './geometry.js'
 import { OneEuro, PointSetFilter, Presence, smoothstep, clamp } from './filters.js'
 
@@ -40,11 +41,33 @@ export const ANCHORS = {
   neck: { p: [0, -11.9, -1.7], n: [0, 0, 1] },
 }
 
+// NAMED FACE ANCHORS (M.anchor(name)). Every anchor is named after the PERSON's side (eyeR = the person's right eye, which is
+// on the left of an un-mirrored camera picture and on the right of the selfie view). Two kinds:
+//  - on the face mesh: the mean of a few landmarks, so it follows expressions (lips, brows, cheeks move with a smile);
+//    its surface direction comes from the canonical face normals turned with the head
+//  - off the mesh (ear lobes, nostril wings, neck): fixed points on the fitted 3D head (ANCHORS above)
+// Each returns { x, y, z (picture pixels, depth), normal {x,y,z} (display space: x right, y down, z toward the viewer),
+// facing (1 = turned to the camera, below 0 = turned away), visible (0..1, from facing), scale (pixels per cm), angle (head roll
+// in the picture, radians) }. For jewellery, makeup and future items: never borrow a "nearby" landmark, ask for the anchor.
+export const FACE_ANCHORS = {
+  eyeR: [33, 133, 159, 145], eyeL: [263, 362, 386, 374], eyeCornerOutR: [33], eyeCornerInR: [133], eyeCornerOutL: [263], eyeCornerInL: [362],
+  browR: [70, 63, 105, 66, 107], browL: [300, 293, 334, 296, 336],
+  noseTip: [1], noseBridge: [168], noseBase: [2],
+  lips: [13, 14], upperLip: [0], lowerLip: [17], lipCornerR: [61], lipCornerL: [291],
+  cheekR: [50, 116], cheekL: [280, 345], cheekboneR: [117], cheekboneL: [346],
+  chin: [152], jawR: [172], jawL: [397], jawLineR: [132, 58, 172, 136], jawLineL: [361, 288, 397, 365],
+  forehead: [10, 151],
+}
+const HEAD_ANCHORS = { earR: 'lobeL', earL: 'lobeR', nostrilR: 'noseL', nostrilL: 'noseR', neck: 'neck' }
+export const ANCHOR_NAMES = [...Object.keys(FACE_ANCHORS), ...Object.keys(HEAD_ANCHORS)]
+
 // Smoothing profiles. Different features need different behaviour:
 //  rigid  - the head as a whole: quick to follow (jewellery, hair colour region, face restore)
 //  shape  - expression on top of the head pose: calmer, so lipstick/eyeliner edges do not shimmer
-// [minCutoff Hz, beta]. Units: position in face-widths, rotation in quaternion units, scale as log(size). Tuned with tests/harness.js.
-export const RIGID = { pos: [1, 45], rot: [1, 30], scale: [1, 45] }
+// [minCutoff Hz, beta]. Units: position in face-widths, rotation in quaternion units, scale as log(size).
+// Re-tuned with tests/rig/face.mjs (Update 12): a faster speed estimate (dCutoff 2 Hz) lets the filter open up sooner when the
+// head starts to move: lag error in quick left-right / up-down moves -22% / -25% for +2.5% still jitter (0.444 -> 0.455 px).
+export const RIGID = { pos: [0.6, 45], rot: [0.6, 60], scale: [0.6, 45], dCutoff: 2 }
 export const SHAPE = { minCutoff: 2.0, beta: 0.15, dCutoff: 1 } // units: canonical cm
 
 // Perspective (optional, OFF by default). A pinhole camera shows a point 5 cm behind the face (an ear lobe) closer to the
@@ -55,20 +78,44 @@ export const SHAPE = { minCutoff: 2.0, beta: 0.15, dCutoff: 1 } // units: canoni
 // (focal length / longer frame side, e.g. 0.75) switches the perspective model on for future tests.
 export const FOCAL = 0
 
+// Missed frames and wrong detections (measured with tests/rig/face.mjs)
+const PREDICT = true, PRED_TAU = 0.12, PRED_MAX_MS = 250 // continue the movement for up to 250 ms without a detection
+const GUARD = true, GUARD_MOVE = 0.3, GUARD_SCALE = 0.15, GUARD_TURN = 0.2 // per 1/30 s beyond the prediction: face widths, log size, radians (11.5 deg); allowed more after a longer gap
+
 export class HeadTracker {
   constructor(rigid = RIGID, shape = SHAPE, focal = FOCAL) {
     this.focal = focal
-    this.fp = [0, 1, 2].map(() => new OneEuro(...rigid.pos, 1))
-    this.fq = [0, 1, 2, 3].map(() => new OneEuro(...rigid.rot, 1))
-    this.fs = new OneEuro(...rigid.scale, 1)
+    const dc = rigid.dCutoff ?? 1
+    this.fp = [0, 1, 2].map(() => new OneEuro(...rigid.pos, dc))
+    this.fq = [0, 1, 2, 3].map(() => new OneEuro(...rigid.rot, dc))
+    this.fs = new OneEuro(...rigid.scale, dc)
     this.shape = new PointSetFilter(shape)
     this.presence = new Presence(160, 240, 90)
-    this.M = null; this.q = null; this.t = null; this.misses = 0; this.rejects = 0
+    this.M = null; this.q = null; this.t = null; this.misses = 0; this.rejects = 0; this.jumps = 0; this.suspect = 0; this.guard = GUARD; this.predict = PREDICT
   }
-  reset() { this.fp.forEach((f) => f.reset()); this.fq.forEach((f) => f.reset()); this.fs.reset(); this.shape.reset(); this.q = null; this.t = null; this.M = null }
+  reset() { this.fp.forEach((f) => f.reset()); this.fq.forEach((f) => f.reset()); this.fs.reset(); this.shape.reset(); this.q = null; this.t = null; this.M = null; this.fit = null; this.suspect = 0 }
+
+  // where the head should be `age` seconds after the last detection, from the filters' own speed estimates. The speed is
+  // trusted less the longer the gap (it fades with a 0.12 s time constant), so a missed frame continues the movement
+  // smoothly instead of freezing the overlay while the real head moves on.
+  _predict(age) {
+    const fit = this.fit, k = PRED_TAU * (1 - Math.exp(-age / PRED_TAU))
+    const t = fit.t.map((v, i) => v + this.fp[i].dx * k), s = fit.s * Math.exp(this.fs.dx * k)
+    let q = this.q.map((v, i) => v + this.fq[i].dx * k); const l = Math.hypot(...q) || 1; q = q.map((v) => v / l)
+    return { s, R: quatToMat(q), t, q }
+  }
+  // is this detection far from where the head can be? (a wrong detection for one or two frames: a hand, motion blur)
+  _implausible(raw, now) {
+    if (!this.fit || this.t === null) return false
+    const gap = Math.max(0, (now - this.t) / 1000), p = this._predict(gap), fw = p.s * FACE_WIDTH_CM, k = Math.max(1, (this.frameDt || 0) * 30) // slow phones (longer time between camera frames) allow a bigger change
+    const move = Math.hypot(raw.t[0] - p.t[0], raw.t[1] - p.t[1]) / fw, grow = Math.abs(Math.log(raw.s / p.s))
+    const q = matToQuat(raw.R), dot = Math.abs(q[0] * p.q[0] + q[1] * p.q[1] + q[2] * p.q[2] + q[3] * p.q[3]), turn = 2 * Math.acos(Math.min(1, dot))
+    return move > k * (this.gMove ?? GUARD_MOVE) || grow > k * (this.gScale ?? GUARD_SCALE) || turn > k * (this.gTurn ?? GUARD_TURN)
+  }
 
   // lm: normalized landmarks or null; W,H: frame size; mirror: selfie view; now: ms. Returns the face model to draw (or null).
   update(lm, W, H, mirror, now) {
+    this.frameDt = this.lastCall == null ? 0 : Math.min(0.5, (now - this.lastCall) / 1000); this.lastCall = now
     if (this.presence.stale(now) && this.M && !lm) { /* keep fading below */ }
     let ok = false
     if (lm && lm.length >= 468) {
@@ -85,8 +132,10 @@ export class HeadTracker {
       const rel = raw.rms / raw.s // residual in canonical cm: big when the landmarks do not form a plausible face
       if (Number.isFinite(rel) && rel < 0.9 && raw.s > 0) {
         if (this.presence.stale(now, 500)) this.reset() // back after a real loss: start fresh instead of sliding from the old place
-        this._ingest(u, raw, now)
-        ok = true
+        // JUMP GUARD: a detection far from the predicted head is held back for up to 2 frames. If it is still there on the 3rd,
+        // the head really is there (a very fast move, or the face came back elsewhere): jump to it without sliding.
+        if (this.guard && this._implausible(raw, now) && this.suspect < 2) { this.suspect++; this.jumps++ }
+        else { if (this.suspect >= 2) this.reset(); this.suspect = 0; this._ingest(u, raw, now); ok = true }
       } else this.rejects++
     }
     if (!ok) this.misses++
@@ -95,6 +144,7 @@ export class HeadTracker {
     if (a <= 0) { this.M = null; this.reset(); return null }
     this.M.alpha = a
     if (ok) this._output(W, H, mirror)
+    else if (this.predict && this.fit && this.t !== null && now - this.t < PRED_MAX_MS) this._output(W, H, mirror, this._predict((now - this.t) / 1000)) // missed frame: continue the movement
     return this.M
   }
 
@@ -114,8 +164,8 @@ export class HeadTracker {
     if (!this.M) this.M = {}
   }
 
-  _output(W, H, mirror) {
-    const fit = this.fit, mx = (x) => (mirror ? W - x : x)
+  _output(W, H, mirror, fit = this.fit) {
+    const mx = (x) => (mirror ? W - x : x)
     // weak-perspective point -> camera picture: nearer points spread out from the picture centre, farther ones move in
     const f = this.focal ? this.focal * Math.max(W, H) : 0, cx = W / 2, cy = H / 2, zr = apply(fit, CANON_C)[2]
     const persp = (p) => { if (!f) return [p[0], p[1], p[2], 1]; const k = f / Math.max(f * 0.3, f + p[2] - zr); return [cx + (p[0] - cx) * k, cy + (p[1] - cy) * k, p[2], k] }
@@ -137,13 +187,30 @@ export class HeadTracker {
       const A = ANCHORS[name], Rb = matMul(rotFraction(matMul(fit.R, BASE), beta), BASE), p = persp(apply({ s: fit.s, R: Rb, t: fit.t }, A.p))
       return { x: mx(p[0]), y: p[1], z: p[2] }
     }
+    // named anchors (see FACE_ANCHORS), computed when asked for and cached for this frame
+    const cache = {}
+    const anchor = (name) => {
+      if (cache[name]) return cache[name]
+      let r
+      if (HEAD_ANCHORS[name]) { const a = project(HEAD_ANCHORS[name]), n = rotate(fit.R, ANCHORS[HEAD_ANCHORS[name]].n); r = { x: a.x, y: a.y, z: a.z, normal: { x: sx * n[0], y: n[1], z: -n[2] }, facing: a.facing } }
+      else {
+        const ids = FACE_ANCHORS[name]; if (!ids) return null
+        let x = 0, y = 0, z = 0, nx = 0, ny = 0, nz = 0
+        for (const i of ids) { x += P[i].x; y += P[i].y; z += P[i].z; nx += FACE_NORMALS[i * 3]; ny += FACE_NORMALS[i * 3 + 1]; nz += FACE_NORMALS[i * 3 + 2] }
+        const k = ids.length, n = rotate(fit.R, [nx / k, ny / k, nz / k]), nl = Math.hypot(...n) || 1
+        r = { x: x / k, y: y / k, z: z / k, normal: { x: (sx * n[0]) / nl, y: n[1] / nl, z: -n[2] / nl }, facing: -n[2] / nl }
+      }
+      r.visible = smoothstep(-0.05, 0.25, r.facing); r.scale = fit.s; r.angle = roll
+      return (cache[name] = r)
+    }
+    const roll = Math.atan2(b.y - a.y, b.x - a.x)
     Object.assign(this.M, {
-      P, W, H, fit, mirror, project, projectPartial, persp, focal: f,
+      P, W, H, fit, mirror, project, projectPartial, persp, focal: f, anchor,
       fw: dist(P[234], P[454]), fh: dist(P[10], P[152]),
       cm: fit.s,                        // pixels per centimetre at the face: true size, does not shrink when the head turns
       fw3: fit.s * FACE_WIDTH_CM,       // true face width in pixels
       up: { x: (sx * up3[0]) / upL, y: up3[1] / upL }, // chin -> forehead direction in the picture (y is negative when upright)
-      roll: Math.atan2(b.y - a.y, b.x - a.x),
+      roll,
       yaw, pitch,
       inFrame: P.reduce((n, p) => n + (p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H ? 1 : 0), 0) / P.length,
     })

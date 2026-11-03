@@ -10,7 +10,7 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
 const ctx = await browser.newContext(phone ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, permissions: ['camera'] } : { viewport: { width: 1400, height: 900 }, permissions: ['camera'] })
 const page = await ctx.newPage()
 const errors = []; page.on('pageerror', (e) => errors.push('pageerror: ' + e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/XNNPACK|TensorFlow|fonts\.g/.test(m.text())) errors.push(m.text()) })
-await page.goto('http://localhost:5199/?debug=stats')
+await page.goto('http://localhost:5199/' + (process.env.Q || '?debug=stats'))
 await page.waitForTimeout(1500)
 await page.evaluate(() => document.querySelector('[data-tryon]').click())
 await page.waitForFunction(() => window.__glamify && window.__glamify.frames > 3, null, { timeout: 180000 })

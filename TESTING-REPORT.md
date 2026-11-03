@@ -1,5 +1,16 @@
 # Testing report
 
+## Update 12: face tracking and 3D face mesh
+
+| Test | Result |
+|---|---|
+| `npm run test:face` (scanned head, real Face Landmarker results, webcam-like jitter): normal, 15% missed frames, 3% wrong detections, 15 fps, mirrored | all better or equal, see `TRACKING-AUDIT.md` Update 12 (wrong-detection worst case 9.56 -> 3.58 cm, missed-frame error -45%, quick-move lag -22 to -25%, jitter +2.5%) |
+| Named anchors vs the scan's ground truth | eyes, nose, lips, cheeks, chin 0.13-0.28 cm median; visibility agrees 90-100% |
+| Full studio on the test-head video with `?debug` (turns, nod, tilt, close, far, dim and warm light, face leaving and coming back) | tracking, mesh and anchors follow; no console errors from the site. In this slow sandbox (2-5 analysed frames per second at 640x480) the face was sometimes not found on a strong upward look and while the head was out of view |
+| Backend suite | 55/55 |
+
+---
+
 ## Update 11: AR phases 1-5
 
 Same environment as Update 10 (headless Chromium, software GPU, real MediaPipe models, scanned 3D test head + real portrait;

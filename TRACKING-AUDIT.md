@@ -1,6 +1,54 @@
 # Tracking audit
 
-## Update 11 (latest): phases 1-5 of the approved AR plan
+## Update 12 (latest): Step 2 - face tracking and 3D face mesh
+Only the face tracker and face mesh changed (`src/tryon/track/head.js`, new `track/normals.js`, `render/facemesh.js` uses the
+shared normals, debug view in `studio.js`). Hair, nails, makeup and outfit code were not touched.
+
+**Technology decision.** MediaPipe Face Landmarker stays: it gives 478 points with depth (3D), runs on the phone GPU in the
+browser, is free and is already measured here. The alternatives checked are either the same model underneath (TensorFlow.js
+face-landmarks-detection, Human) or paid SDKs (DeepAR, Banuba). Its own head-pose matrix was not adopted: the studio's
+canonical-face fit already gives the 3D pose, and a perspective version measured worse (Update 11).
+
+**Test bench:** `node tests/rig/face.mjs` - the real Face Landmarker results of a scanned head with known ground truth
+(30 face points, both ear lobes), with webcam-like jitter, under normal, missed-frame (15% of moving frames), wrong-detection
+(3% of frames), 15 fps and mirrored conditions. Errors in cm on a real-size face.
+
+| Measure | Before | After | Change |
+|---|---|---|---|
+| Still jitter | 0.444 px | 0.455 px | +2.5% (not visible) |
+| Quick left-right move, 95th percentile | 0.68 cm | 0.53 cm | -22% lag |
+| Quick up-down move, 95th percentile | 0.52 cm | 0.39 cm | -25% lag |
+| Head turn / nod / tilt, 95th percentile | 0.94 / 0.69 / 0.35 cm | 0.95 / 0.69 / 0.30 cm | same / same / better |
+| Closer and farther, 95th percentile | 0.33 cm | 0.32 cm | same |
+| Lighting changes, 95th percentile | 0.38 cm | 0.38 cm | same |
+| Missed frames: error on those frames (median / 95th) | 0.61 / 2.19 cm | 0.35 / 1.19 cm | -43% / -46% |
+| Wrong detections: error on those frames (median / 95th / worst) | 1.78 / 7.62 / 9.56 cm | 0.26 / 1.08 / 3.58 cm | the jump is gone |
+| 15 fps phone, quick left-right move, 95th | 0.68 cm | 0.55 cm | the guard does not hold back fast moves |
+| Mirrored (selfie) view vs camera view | identical | identical | mapping correct |
+
+What changed:
+1. **Missed frames** (motion blur, a hand passing, a slow phone): the head keeps moving with its measured speed for up to
+   250 ms (the speed is trusted less the longer the gap) instead of freezing while the real head moves on.
+2. **Jump guard:** a detection far from where the head can be (more than 0.3 face widths, 11.5 deg or 15% size beyond the
+   prediction per 1/30 s, allowed more on slower cameras) is held back for up to 2 frames. If it is still there on the 3rd
+   frame it is real (a very fast move, or the face came back elsewhere) and the tracker jumps to it cleanly.
+3. **Faster response:** the smoothing reacts sooner when the head starts to move (re-tuned on the bench, see the table).
+4. **Named anchors** `M.anchor(name)`: earR/earL, eyeR/eyeL (+ inner/outer corners), browR/browL, noseTip, noseBridge,
+   noseBase, nostrilR/L, lips, upperLip, lowerLip, lipCornerR/L, cheekR/L, cheekboneR/L, chin, jawR/jawL, jawLineR/L,
+   forehead, neck. Each gives position, depth, surface direction, facing / visibility, size (px per cm) and roll. Named after
+   the person's own side. Measured (median / 95th, cm): eyes 0.13-0.16 / 0.38-0.42, nose tip 0.20 / 0.50, lips 0.17 / 0.57,
+   lip corners 0.16-0.17 / 0.50-0.58, cheeks 0.16-0.18 / 0.63-0.75, chin 0.24 / 0.71, ears 0.45 / 0.88; visibility agrees
+   with the scan 90-100% of the time. `?debug` draws them with their names.
+5. **3D face mesh**: it is built from the same tracked points, so it inherits all of the above (no frozen or jumping mesh on
+   a bad frame); its surface directions now come from the shared `track/normals.js`.
+
+Remaining limits: ear lobes and the neck are still estimated from an average head (about 0.45 cm median, 1 cm worst case for
+real people whose ears differ); a turned head has the largest face error (0.95 cm at the 95th percentile, mostly the
+detector itself: 0.95 cm unsmoothed); not run on a phone or a real person.
+
+---
+
+## Update 11: phases 1-5 of the approved AR plan
 Plan and audit: the "Glamify Mirror Me - AR System Audit" document. Every phase was tested on the scanned 3D test head
 (`tests/rig/`) and/or a real portrait photo, with the real MediaPipe models, in headless Chromium without a GPU.
 
