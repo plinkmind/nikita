@@ -153,23 +153,4 @@ async function seg() {
     if (i === 2) { cv.width = W; cv.height = H; cx.drawImage(f, 0, 0); const id = cx.getImageData(0, 0, W, H); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const v = a[Math.floor(y * m.height / H) * m.width + Math.floor(x * m.width / W)]; if (v === 1) { const k = (y * W + x) * 4; id.data[k] = 255; id.data[k + 1] *= 0.4 } } cx.putImageData(id, 0, 0) } })
   window.__result = info; log(JSON.stringify(info))
 }
-// body model on an image of any size: draws shoulder / hip points
-async function pose() {
-  const img = await load('./img/' + (q.get('img') || 'user_far.png')), W = img.width, H = img.height
-  const det = await createPoseTracker()
-  const f = document.createElement('canvas'); f.width = W; f.height = H; f.getContext('2d').drawImage(img, 0, 0)
-  let r; for (let i = 0; i < 4; i++) r = det.detectForVideo(f, i * 33 + 1)
-  cv.width = W; cv.height = H; cx.drawImage(f, 0, 0)
-  const lm = r.landmarks[0] || []
-  lm.forEach((p, i) => { cx.fillStyle = [11, 12].includes(i) ? '#ff0' : [23, 24].includes(i) ? '#0ff' : '#f0f'; cx.fillRect(p.x * W - 5, p.y * H - 5, 10, 10) })
-  window.__result = { W, H, n: lm.length, sh: lm.slice(11, 13).map((p) => [+(p.x * W).toFixed(0), +(p.y * H).toFixed(0), +p.visibility.toFixed(2)]), nose: lm[0] && [+(lm[0].x * W).toFixed(0), +(lm[0].y * H).toFixed(0)] }
-  log(JSON.stringify(window.__result))
-}
-import { prepGarment } from '../src/tryon/outfit.js'
-async function garment() {
-  const img = await load('./img/' + (q.get('img') || 'tee.png')), r = prepGarment(await createImageBitmap(img))
-  cv.width = r.canvas.width; cv.height = r.canvas.height
-  cx.fillStyle = '#c03'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(r.canvas, 0, 0)
-  window.__result = { cleaned: r.cleaned, w: cv.width, h: cv.height, shoulderFrac: r.canvas.shoulderFrac }; log(JSON.stringify(window.__result))
-}
-;({ anchors, motion, nails, seg, pose, garment })[test]().catch((e) => { window.__result = { error: String(e && e.stack || e) }; log('ERROR', e && e.stack || e) })
+;({ anchors, motion, nails, seg })[test]().catch((e) => { window.__result = { error: String(e && e.stack || e) }; log('ERROR', e && e.stack || e) })

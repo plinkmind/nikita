@@ -97,11 +97,10 @@ export function prepGarment(img) {
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h
   const x = cv.getContext('2d', { willReadFrequently: true }); x.drawImage(c0, l, t, w, h, 0, 0, w, h)
   const d = x.getImageData(0, 0, w, h), px = d.data, idx = (i, j) => (j * w + i) * 4
-  // 2. plain background = the colour most of the border has (median), if at least 60% of the border is close to it
+  // 2. plain background = the colour most of the border has (median); two-tone (a saved "transparent" checkerboard) supported
   const border = []; for (let i = 0; i < w; i += 2) { border.push(idx(i, 0), idx(i, h - 1)) } for (let j = 0; j < h; j += 2) { border.push(idx(0, j), idx(w - 1, j)) }
   const med = (ch) => { const v = border.map((o) => px[o + ch]).sort((p, q) => p - q); return v[v.length >> 1] }
   const bg = [med(0), med(1), med(2)], d1 = (o, c) => Math.hypot(px[o] - c[0], px[o + 1] - c[1], px[o + 2] - c[2])
-  // two-tone backgrounds (a "transparent" checkerboard saved into the photo): second colour = median of the border pixels far from the first
   const far2 = border.filter((o) => d1(o, bg) >= 45), bg2 = far2.length > border.length * 0.2 ? [0, 1, 2].map((ch) => { const v = far2.map((o) => px[o + ch]).sort((p, q) => p - q); return v[v.length >> 1] }) : null
   const colourless = (c) => Math.max(...c) - Math.min(...c) < 25
   const dist = (o) => (bg2 && colourless(bg) && colourless(bg2) ? Math.min(d1(o, bg), d1(o, bg2)) : d1(o, bg))
@@ -114,7 +113,7 @@ export function prepGarment(img) {
     const seen = new Uint8Array(w * h), st = []
     // the fill also stops at any local edge (a step bigger than edgeTol between neighbours), so a white garment on a white
     // background keeps its faint outline and is not eaten into
-    const edgeTol = Math.max(7, spread * 1.6), step = (a, b) => Math.abs(px[a] - px[b]) + Math.abs(px[a + 1] - px[b + 1]) + Math.abs(px[a + 2] - px[b + 2])
+    const edgeTol = Math.max(7, spread * 1.6), step = (a, b2) => Math.abs(px[a] - px[b2]) + Math.abs(px[a + 1] - px[b2 + 1]) + Math.abs(px[a + 2] - px[b2 + 2])
     const push = (i, j, from) => { if (i < 0 || j < 0 || i >= w || j >= h) return; const o = j * w + i; if (seen[o] || dist(o * 4) >= tol) return; if (from >= 0 && step(o * 4, from * 4) > edgeTol) return; seen[o] = 1; st.push(o) }
     for (let i = 0; i < w; i++) { push(i, 0, -1); push(i, h - 1, -1) } for (let j = 0; j < h; j++) { push(0, j, -1); push(w - 1, j, -1) }
     while (st.length) { const o = st.pop(), i = o % w, j = (o / w) | 0; px[o * 4 + 3] = 0; removed++; push(i + 1, j, o); push(i - 1, j, o); push(i, j + 1, o); push(i, j - 1, o) }
@@ -129,7 +128,7 @@ export function prepGarment(img) {
       }
       for (let o = 0; o < w * h; o++) if (px[o * 4 + 3] && lab[o] !== best) px[o * 4 + 3] = 0
     }
-    if (removed > w * h * 0.93) { removed = 0; x.drawImage(c0, l, t, w, h, 0, 0, w, h) } // would remove almost everything: keep the original
+    if (removed > w * h * 0.93) { removed = 0; for (let o = 3; o < px.length; o += 4) px[o] = 255; x.drawImage(c0, l, t, w, h, 0, 0, w, h) } // would remove almost everything: keep the original
     else {
       for (let j = 1; j < h - 1; j++) for (let i = 1; i < w - 1; i++) { const o = idx(i, j); if (px[o + 3] && (!px[o - 1] || !px[o + 7] || !px[o - w * 4 + 3] || !px[o + w * 4 + 3])) px[o + 3] = 140 } // soften the cut edge
       x.putImageData(d, 0, 0)
@@ -141,12 +140,11 @@ export function prepGarment(img) {
   if (a1 <= a0 || b1 <= b0) return { canvas: cv, cleaned: false }
   const out = document.createElement('canvas'); out.width = a1 - a0 + 1; out.height = b1 - b0 + 1
   out.getContext('2d').drawImage(cv, a0, b0, out.width, out.height, 0, 0, out.width, out.height)
-  // 4. measure the garment's shoulder width (opaque width at ~12% of its height) and where its collar starts, for sizing
+  // 4. measure the garment's top (first row at least 30% as wide as the garment: skips a hanger or a hook above it) and its
+  //    shoulder width a little below that, for sizing on the body
   if (removed) {
     const od = out.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, out.width, out.height).data
     const rowWidth = (j) => { let lo = -1, hi = -1; for (let i = 0; i < out.width; i++) if (od[(j * out.width + i) * 4 + 3] > 100) { if (lo < 0) lo = i; hi = i } return lo < 0 ? 0 : hi - lo }
-    // the garment's top = first row at least 30% as wide as the garment (skips a hanger or a hook above it);
-    // its shoulder width = the width a little below that
     let top0 = 0; while (top0 < out.height * 0.4 && rowWidth(top0) < out.width * 0.3) top0++
     const sh = Math.min(out.height - 1, top0 + Math.round(out.height * 0.05))
     out.shoulderFrac = [sh - 2, sh, sh + 2].map(rowWidth).sort((p, q) => p - q)[1] / out.width

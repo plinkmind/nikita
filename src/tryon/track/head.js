@@ -23,13 +23,19 @@ const CANON_ALL = Array.from({ length: 468 }, (_, i) => C(i))
 const FACE_WIDTH_CM = 15.32 // canonical distance 234 <-> 454
 
 // Anchor points on the canonical head (centimetres, x = image right, y = up, z = toward camera) with an outward normal
-// used for visibility. Ear lobes: level with the base of the nose, just outside and behind the face contour (234 / 454).
+// used for visibility. Ear lobes (piercing point): about level with the base of the nose, outside the face contour and
+// ~5 cm BEHIND the face surface. Measured on a 3D head scan turning +-45 deg (tests/rig): the earlier point (z -3.4) was 1.4 cm
+// too far forward, which only shows when the head turns (error grew from 0.7 to 1.5 cm at 45 deg). Height is a compromise
+// between the scan (-2.0) and the portrait photo (-1.3): real ears differ by about +-1 cm between people.
 export const ANCHORS = {
-  lobeL: { p: [-8.3, -1.3, -3.4], n: [-1, 0, 0] }, // the person's right ear (image left in an un-mirrored camera)
-  lobeR: { p: [8.3, -1.3, -3.4], n: [1, 0, 0] },
+  lobeL: { p: [-8.0, -1.7, -4.8], n: [-1, 0, 0] }, // the person's right ear (image left in an un-mirrored camera)
+  lobeR: { p: [8.0, -1.7, -4.8], n: [1, 0, 0] },
   noseL: { p: [-1.92, -0.95, 5.0], n: [-0.8, 0, 0.6] }, // outside of the nostril wing (ala)
   noseR: { p: [1.92, -0.95, 5.0], n: [0.8, 0, 0.6] },
-  neck: { p: [0, -15.5, -1.5], n: [0, 0, 1] },         // front base of the neck (fallback when the body model is off)
+  // front base of the neck (collarbone notch) - only the FALLBACK when the body model has no shoulders. Measured on the
+  // head scan: the earlier point (-15.5) was 3.4 cm too low. Use with projectPartial(): the neck only follows part of the
+  // head's rotation (the notch is on the chest, it does not swing when you turn or nod your head).
+  neck: { p: [0, -11.9, -1.7], n: [0, 0, 1] },
 }
 
 // Smoothing profiles. Different features need different behaviour:
@@ -103,8 +109,14 @@ export class HeadTracker {
       const A = ANCHORS[name], p = apply(fit, A.p), n = rotate(fit.R, A.n)
       return { x: mx(p[0]), y: p[1], z: p[2], facing: -n[2] } // facing > 0: surface turned toward the camera
     }
+    // like project(), but with only a fraction `beta` of the head's rotation away from facing the camera (for points that sit
+    // below the head, on the neck/chest, which turn less than the head does)
+    const projectPartial = (name, beta) => {
+      const A = ANCHORS[name], Rb = matMul(rotFraction(matMul(fit.R, BASE), beta), BASE), p = apply({ s: fit.s, R: Rb, t: fit.t }, A.p)
+      return { x: mx(p[0]), y: p[1], z: p[2] }
+    }
     Object.assign(this.M, {
-      P, W, H, fit, mirror, project,
+      P, W, H, fit, mirror, project, projectPartial,
       fw: dist(P[234], P[454]), fh: dist(P[10], P[152]),
       cm: fit.s,                        // pixels per centimetre at the face: true size, does not shrink when the head turns
       fw3: fit.s * FACE_WIDTH_CM,       // true face width in pixels
@@ -116,10 +128,24 @@ export class HeadTracker {
   }
 }
 
-// ear lobe visibility: the far ear disappears behind the head between about 25 and 40 degrees of turn
-export const earVisibility = (facing) => 1 - smoothstep(0.42, 0.66, -facing)
+// Ear visibility. The far ear lobe goes behind the cheek and jaw at only ~15-20 deg of turn, but an earring HANGS below the
+// lobe and stays visible under the jaw much longer. So the part of an earring that is behind the face is cut away with the
+// face outline (jewellery.js, earOcclusion), and the whole earring only fades when the ear is fully behind the head
+// (about 35 to 55 deg). Before, the whole earring stayed until ~30 deg and was painted OVER the cheek from 15 to 30 deg.
+export const earVisibility = (facing) => 1 - smoothstep(0.57, 0.82, -facing)
+// how much an ear is turned away from the camera (0 = side-on or toward, 1 = clearly away): enables the face cut-out
+export const earAway = (facing) => smoothstep(0.02, 0.12, -facing)
 export const noseVisibility = (facing) => smoothstep(-0.25, 0.1, facing)
 
+// canonical (y up, z toward camera) -> camera picture (y down, z away): the head facing the camera straight on
+const BASE = [[1, 0, 0], [0, -1, 0], [0, 0, -1]]
+const matMul = (A, B) => A.map((r) => [0, 1, 2].map((j) => r[0] * B[0][j] + r[1] * B[1][j] + r[2] * B[2][j]))
+function rotFraction(R, beta) { // same rotation axis, beta x the angle
+  const c = Math.max(-1, Math.min(1, (R[0][0] + R[1][1] + R[2][2] - 1) / 2)), ang = Math.acos(c); if (ang < 1e-6) return R
+  const sn = Math.sin(ang), [x, y, z] = [(R[2][1] - R[1][2]) / (2 * sn), (R[0][2] - R[2][0]) / (2 * sn), (R[1][0] - R[0][1]) / (2 * sn)]
+  const a = ang * beta, ca = Math.cos(a), sa = Math.sin(a), C = 1 - ca
+  return [[ca + x * x * C, x * y * C - z * sa, x * z * C + y * sa], [y * x * C + z * sa, ca + y * y * C, y * z * C - x * sa], [z * x * C - y * sa, z * y * C + x * sa, ca + z * z * C]]
+}
 function transpose(R) { return [[R[0][0], R[1][0], R[2][0]], [R[0][1], R[1][1], R[2][1]], [R[0][2], R[1][2], R[2][2]]] }
 function matToQuat(R) {
   const tr = R[0][0] + R[1][1] + R[2][2]; let w, x, y, z

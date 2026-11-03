@@ -9,13 +9,14 @@ const errors = []; page.on('pageerror', (e) => errors.push('pageerror: ' + e.mes
 await page.goto('http://localhost:5199/' + (process.env.NODEBUG ? '' : '?debug'))
 await page.waitForTimeout(1500)
 await page.evaluate(() => document.querySelector('[data-tryon]').click())
-await page.waitForFunction(() => window.__glamify && window.__glamify.frames > 5, null, { timeout: process.env.NODEBUG ? 15000 : 120000 }).catch(() => {})
+await page.waitForFunction(() => window.__glamify && window.__glamify.frames > 5, null, { timeout: 120000 }).catch(() => {})
 const tabOf = { np: 'nails', o: 'outfits', haircolor: 'hair' }
 for (const id of ids.split(',')) {
   const tab = Object.entries(tabOf).find(([k]) => id.startsWith(k))?.[1] || (['lipstick', 'eyeliner', 'eyeshadow', 'blush', 'brows', 'mascara', 'highlighter', 'foundation', 'gloss', 'concealer', 'primer'].includes(id) ? 'makeup' : 'jewellery')
   await page.click(`.ts-tabs [data-tab="${tab}"]`); await page.click(`[data-p="${id}"]`)
 }
 if (garment) { await page.setInputFiles('[data-up]', garment) }
+if (process.env.SHADE) await page.click(`.ts-sw [data-s="${process.env.SHADE}"]`)
 if (process.env.SHADE) await page.click(`.ts-sw [data-s="${process.env.SHADE}"]`)
 const shots = [], stats = []
 for (const [i, t] of [1.2, 3.0, 4.6, 6.2, 7.5, 9.4].entries()) {

@@ -1,10 +1,12 @@
 # LOCAL TEST STAND-IN for the free Hugging Face Space "yisol/IDM-VTON" (Gradio 4.24.0).
 # Same components, same order and same api_name ("tryon") as the Space's app.py, so the website's real client code can be
 # tested without internet. It does NOT do any AI: it returns the person photo stamped "LOCAL STAND-IN - NOT AI" and writes
-# what it received to received.json. usage: python idm_vton_standin.py [port]
+# what it received to received.json.
+# setup: python -m venv .venv && .venv/bin/pip install "gradio==4.24.0" "huggingface_hub<0.26" "pydantic==2.10.6" audioop-lts
+# usage: .venv/bin/python tests/standin/idm_vton_standin.py 7861   (then set FREE_TRYON_SPACE=http://127.0.0.1:7861/)
 import json, sys, os
 import gradio as gr
-import gradio.networking as _n; _n.url_ok = lambda *a, **k: True  # sandbox: skip the "is localhost reachable" self-check
+import gradio.networking as _n; _n.url_ok = lambda *a, **k: True  # sandboxed machines: skip the "is localhost reachable" self-check
 from PIL import ImageDraw
 
 OUT = os.path.join(os.path.dirname(__file__), 'received.json')
@@ -32,8 +34,7 @@ with gr.Blocks() as demo:
     try_button.click(fn=start_tryon, inputs=[imgs, garm_img, prompt, is_checked, is_checked_crop, denoise_steps, seed], outputs=[image_out, masked_img], api_name='tryon')
 
 # Hugging Face serves Spaces behind its own proxy, which answers cross-origin requests from other websites (with cookies
-# allowed). Gradio's built-in CORS does not allow cookies, so the website's client could not talk to a plain local Gradio.
-# This small wrapper adds the same kind of headers so the browser test exercises the real client code path.
+# allowed). Gradio's built-in CORS does not allow cookies, so this small wrapper adds the same kind of headers.
 import uvicorn
 from fastapi import FastAPI
 class HFLikeCORS:

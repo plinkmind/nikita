@@ -13,7 +13,7 @@ export const needOf = (p) => p.need || (['necklace', 'chain', 'pendant'].include
 export const CATEGORIES = {
   makeup: { label: 'Makeup', products: MAKEUP, groups: [{ name: 'Makeup products', ids: MAKEUP.map((p) => p.id) }] },
   hair: { label: 'Hair', products: HAIR, groups: [{ name: 'Hair colours (your real hair)', ids: ['haircolor'] }], note: { text: 'Hairstyles (short, bob, long, curly...) are made by AI from a photo, because a live overlay cannot look like real hair.', mode: 'hair', button: 'Try hairstyles with AI Photo' } },
-  outfits: { label: 'Outfits', products: OUTFITS, groups: [{ name: 'Your own clothing', ids: ['o-custom'] }], note: { text: 'For a realistic outfit try-on, use an AI-generated result. The live preview below only places your own garment photo on your body.', mode: 'outfit', button: 'Try outfits with AI Photo' } },
+  outfits: { label: 'Outfits', products: OUTFITS, groups: [{ name: 'Your own clothing', ids: ['o-custom'] }], note: { text: 'For a realistic outfit try-on, use an AI-generated result. The live preview below only places your own garment photo on your body.', mode: 'outfit', button: 'Try outfits with AI (See It On You)' } },
   nails: { label: 'Nails', products: NAILS, groups: [{ name: 'Nail polish', ids: ['np-nude', 'np-pink', 'np-red', 'np-dark'] }, { name: 'Designs', ids: ['np-french', 'np-glitter', 'np-ombre', 'np-chrome'] }] },
   jewellery: {
     label: 'Jewellery', products: JEWELLERY,

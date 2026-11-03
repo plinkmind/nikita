@@ -5,7 +5,8 @@ import { createFaceTracker, createPoseTracker, createHandTracker, createSegmente
 import { HeadTracker } from './track/head.js'
 import { PointSetFilter, Presence } from './track/filters.js'
 import { initPhoto } from './photo.js'
-import { drawMakeup } from './makeup.js'
+import { drawMakeup, MESH_IDS } from './makeup.js'
+import { createFaceMesh } from './render/facemesh.js'
 import { JEWELLERY, drawJewellery, resetJewellery } from './jewellery.js'
 import { drawHairColour, buildHairMask, FACE_OVAL } from './hair.js'
 import { drawNails } from './nails.js'
@@ -57,15 +58,25 @@ export function initStudio(hooks = {}) {
   // Extra models (body pose, hands, hair segmentation) are downloaded only when a product that needs them is applied.
   const EXTRA = { pose: { make: createPoseTracker, name: 'Body' }, hand: { make: createHandTracker, name: 'Hand' }, seg: { make: createSegmenter, name: 'Hair' } }
   const models = {}
-  function ensure(k) {
+  function ensure(k, quiet = false) { // quiet: loaded only for a background job (hand occlusion), so no note on screen
     const m = (models[k] ||= { t: null, busy: false, n: 0, ms: 0, failedAt: 0 })
-    if (m.t || m.busy || (m.failedAt && performance.now() - m.failedAt < 8000)) return m
-    m.busy = true; note = `Loading ${EXTRA[k].name.toLowerCase()} tracking...` // small note, does not cover the camera view
-    EXTRA[k].make().then((t) => { m.t = t; note = '' }).catch(() => { m.failedAt = performance.now(); note = ''; say(`${EXTRA[k].name} tracking could not load. Check your internet connection.`); setTimeout(() => say(''), 3500) }).finally(() => { m.busy = false })
+    // a model that failed 3 times in a row is not retried until the studio is opened again (no endless "Loading..." note)
+    if (m.t || m.busy || m.fails >= 3 || (m.failedAt && performance.now() - m.failedAt < 8000)) return m
+    m.busy = true; if (!quiet) note = `Loading ${EXTRA[k].name.toLowerCase()} tracking...` // small note, does not cover the camera view
+    EXTRA[k].make().then((t) => { m.t = t; m.fails = 0; m.usedAt = performance.now(); note = "" }).catch(() => { m.failedAt = performance.now(); m.fails = (m.fails || 0) + 1; note = ''; if (quiet) return; say(`${EXTRA[k].name} tracking could not load. Check your internet connection.`); setTimeout(() => say(''), 3500) }).finally(() => { m.busy = false })
     return m
   }
+  // Release an extra model that no applied product has needed for 30 s (and all of them when the studio closes), so a phone
+  // does not keep four AI models in GPU memory. It loads again (from the browser cache) when a product needs it.
+  function releaseIdle(need, now, all = false) {
+    for (const k of Object.keys(models)) {
+      const m = models[k], used = need.has(k) || (k === 'hand' && need.has('handOcc'))
+      if (used) { m.usedAt = now; continue }
+      if (m.t && !m.busy && (all || now - (m.usedAt || 0) > 30000)) { try { m.t.close() } catch { /* already closed */ } m.t = null; if (k === 'pose') { pose = null; poseFilter.reset() } if (k === 'hand') hands = [] }
+    }
+  }
   const needs = () => { const n = new Set(); Object.keys(state).forEach((id) => { const p = findProduct(id); if (p) needOf(p).split('+').forEach((k) => n.add(k)) }); return n }
-  const debug = new URLSearchParams(location.search).has('debug') // add ?debug to the address to see tracking diagnostics
+  const debugQ = new URLSearchParams(location.search), debug = debugQ.has('debug'), debugDraw = debug && debugQ.get('debug') !== 'stats' // ?debug: tracking diagnostics on screen (?debug=stats: numbers only, for tests)
   const stat = { fpsT: 0, camN: 0, cam: 0, detMs: 0, dup: 0, ms: { hand: 0, pose: 0, seg: 0 } }
   let lastVT = -1, frameNo = 0, vfcFrames = 0, seenVfc = 0, lastNewAt = 0, budgetK = 1
   // New camera frames are detected with requestVideoFrameCallback where the browser has it (exact), otherwise from the video
@@ -111,7 +122,7 @@ export function initStudio(hooks = {}) {
       const s = handSlots[key]; if (!s) continue
       const a = s.pr.update(now, seen.has(key))
       s.streak = seen.has(key) ? (s.streak || 0) + 1 : 0
-      if (a > 0 && s.P) hands.push({ P: s.P, Wd: s.Wd, right: s.right, alpha: a, sure: s.streak >= 2 || (s.sure && a > 0) }), (s.sure = s.streak >= 2 || (s.sure && a > 0)); else { s.f.reset(); s.fw.reset(); s.P = null; s.sure = false }
+      if (a > 0 && s.P) { s.sure = s.streak >= 2 || (s.sure && a > 0); hands.push({ P: s.P, Wd: s.Wd, right: s.right, alpha: a, sure: s.sure }) } else { s.f.reset(); s.fw.reset(); s.P = null; s.sure = false }
     }
   }
   // ---- hair mask (segmentation), smoothed over time so its edge does not shimmer ----
@@ -152,6 +163,10 @@ export function initStudio(hooks = {}) {
     x.globalCompositeOperation = 'source-in'; x.drawImage(raw, 0, 0); x.globalCompositeOperation = 'source-over'
     c.drawImage(handCv, 0, 0)
   }
+  // 3D face mask (WebGL) for skin products; created when first needed, null when WebGL is not available (2D fallback)
+  let mesh
+  const meshOff = debugQ.get('mesh') === '0' // ?mesh=0: 2D renderer only (for comparison)
+  const faceMesh = () => { if (meshOff) return null; if (mesh === undefined) { try { mesh = createFaceMesh() } catch { mesh = null } } return mesh?.ok === false ? null : mesh }
   const say = (t) => { msg.textContent = t || ''; msg.hidden = !t }
   const btn = (a) => $(`[data-a="${a}"]`)
 
@@ -180,9 +195,9 @@ export function initStudio(hooks = {}) {
   }
 
   // How often each extra model runs, in camera frames. The face and the hands (when nails are on) run on EVERY new frame:
-  // they are the items that must stick to fast-moving parts. The hair mask runs on every frame on computers (every 2nd on
-  // phones); necklace-only body tracking runs every 3rd frame (the necklace position comes from the head, see jewellery.js).
-  const every = (k, need) => (k === 'hand' ? 1 : k === 'pose' ? (Object.keys(state).some((id) => OUTFIT_IDS.has(id)) ? (phone ? 2 : 1) : 3) : phone ? 2 : 1)
+  // they are the items that must stick to fast-moving parts. Body tracking (outfits AND necklaces, which now sit on the
+  // shoulders, see jewellery.js) and the hair mask run on every frame on computers, every 2nd frame on phones.
+  const every = (k) => (k === 'hand' ? 1 : phone ? 2 : 1)
 
   function loop() {
     if (!running) return
@@ -204,10 +219,10 @@ export function initStudio(hooks = {}) {
       lastVT = vid.currentTime; seenVfc = vfcFrames; lastNewAt = tNow; frameNo++; stat.camN++
       if (now - stat.fpsT >= 1000) { stat.cam = stat.camN; stat.camN = 0; stat.fpsT = now }
       rctx.save(); if (cam.mirror) { rctx.translate(w, 0); rctx.scale(-1, 1) } rctx.drawImage(vid, 0, 0, w, h); rctx.restore()
-      // hands are also tracked (computers only, every 2nd frame) when face items are on, so a hand passing in front of the
+      // hands are also tracked (computers only) when face items are on, so a hand passing in front of the
       // face hides the makeup / earrings / necklace behind it instead of having them painted on top of the hand
       if (!phone && need.has('face') && Object.keys(state).some((id) => ['makeup', 'jewellery'].includes(categoryOf(id)))) need.add('handOcc')
-      ;['pose', 'hand', 'seg'].forEach((k) => (need.has(k) || (k === 'hand' && need.has('handOcc'))) && ensure(k))
+      ;['pose', 'hand', 'seg'].forEach((k) => (need.has(k) || (k === 'hand' && need.has('handOcc'))) && ensure(k, !need.has(k)))
       // all models analyse the SAME frame that is drawn below
       if (tracker && need.has('face')) {
         const t0 = performance.now(); let lm = null
@@ -220,12 +235,13 @@ export function initStudio(hooks = {}) {
         // hands only for occlusion (no nails): every 3rd frame, every 6th while no hand has been seen for a second
         if (k === 'hand' && !need.has('hand') && frameNo % ((performance.now() - handSeenAt < 1000 ? 3 : 6) * budgetK)) continue
         if (k !== 'hand' && budgetK > 1 && frameNo % budgetK) continue
-        if (frameNo % every(k, need) && !(k === 'pose' && !pose)) continue
+        if (frameNo % every(k) && !(k === 'pose' && !pose)) continue
         const t0 = performance.now()
         try { if (k === 'hand') updateHands(now, w, h); else if (k === 'pose') updatePose(now, w, h); else updateSeg(now) } catch { /* try again next frame */ }
         stat.ms[k] = stat.ms[k] * 0.9 + (performance.now() - t0) * 0.1
       }
       if (!need.has('hand') && !need.has('handOcc')) hands = []
+      if (frameNo % 30 === 0) releaseIdle(need, now)
     }
     dirty = false
     const tDraw = performance.now()
@@ -246,7 +262,7 @@ export function initStudio(hooks = {}) {
       // face items fade together with tracking presence (no sudden pop in or out); a short miss keeps the last position
       const target = M.alpha < 0.999 ? lctx : fctx
       if (target === lctx) lctx.drawImage(fin, 0, 0)
-      drawMakeup(target, M, state, raw)
+      drawMakeup(target, M, state, raw, Object.keys(state).some((id) => MESH_IDS.has(id)) ? faceMesh() : null)
       M.shoulders = B ? { l: B.l, r: B.r } : null
       drawJewellery(target, M, state, t)
       if (target === lctx) { fctx.save(); fctx.globalAlpha = M.alpha; fctx.drawImage(lay, 0, 0); fctx.restore() }
@@ -263,7 +279,7 @@ export function initStudio(hooks = {}) {
     stat.drawMs = (stat.drawMs || 0) * 0.9 + (performance.now() - tDraw) * 0.1; stat.procMs = (stat.procMs || 0) * 0.9 + (performance.now() - now) * 0.1
     // adaptive budget: if a frame takes longer than the camera interval, run the secondary models less often (never the face)
     if (frameNo % 15 === 0) budgetK = stat.procMs > (phone ? 50 : 38) ? Math.min(4, budgetK + 1) : stat.procMs < (phone ? 28 : 22) ? Math.max(1, budgetK - 1) : budgetK
-    if (debug) { drawDebug(w, h, need); window.__glamify = { frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
+    if (debug) { if (debugDraw) drawDebug(w, h, need); window.__glamify = { models: Object.keys(models).filter((k) => models[k].t), need: [...need], hint: hint.hidden ? '' : hint.textContent, neck: M && M.shoulders !== undefined ? !!M.shoulders : null, frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), mesh: !!mesh && mesh.ok, hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
     if (compare) {
       const x = (w * split.value) / 100
       octx.save(); octx.beginPath(); octx.rect(0, 0, x, h); octx.clip(); octx.drawImage(raw, 0, 0); octx.restore()
@@ -420,12 +436,13 @@ export function initStudio(hooks = {}) {
 
   function open() {
     lastOpener = document.activeElement
+    Object.values(models).forEach((m) => { m.fails = 0; m.failedAt = 0 })
     root.hidden = false; document.body.classList.add('studio-open'); renderList(); sync()
     root.scrollTop = 0; $('.ts-x').focus({ preventScroll: true }); hooks.onOpen?.()
     start() // runs from the tap on "Try It On", so the browser allows the camera prompt
   }
   function close() {
-    photo.hide(); cam.stop(); stopLoop(); root.hidden = true; document.body.classList.remove('studio-open')
+    photo.hide(); cam.stop(); stopLoop(); releaseIdle(new Set(), performance.now(), true); if (mesh) { mesh.dispose(); mesh = undefined } root.hidden = true; document.body.classList.remove('studio-open')
     lastOpener?.focus?.({ preventScroll: true }); hooks.onClose?.()
   }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !root.hidden) close() })

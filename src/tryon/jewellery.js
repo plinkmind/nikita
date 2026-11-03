@@ -1,4 +1,4 @@
-import { earVisibility, noseVisibility } from './track/head.js'
+import { earVisibility, earAway, noseVisibility } from './track/head.js'
 import { FACE_OVAL } from './hair.js'
 // Jewellery renderer: drawn as metal + gems, anchored to face landmarks and head roll / turn.
 const sh = (n, c) => ({ n, c })
@@ -58,7 +58,7 @@ const at = (c, x, y, rot, fn) => { c.save(); c.translate(x, y); c.rotate(rot); f
 // cannot jump to the cheek, mouth or nose. Each ear is handled independently: an ear that turns away behind the head fades
 // out (its own visibility), and an ear outside the picture is simply not drawn. Earrings hang under gravity and swing.
 const swing = { lobeL: { a: 0, v: 0, x: null, t: 0, vis: 0 }, lobeR: { a: 0, v: 0, x: null, t: 0, vis: 0 } }
-export function resetJewellery() { Object.values(swing).forEach((s) => Object.assign(s, { a: 0, v: 0, x: null, vis: 0 })) }
+export function resetJewellery() { Object.values(swing).forEach((s) => Object.assign(s, { a: 0, v: 0, x: null, vis: 0 })); Object.assign(NF, { w: 0, body: null, rot: 0, t: null }) }
 const EARS = (M, T) => ['lobeL', 'lobeR'].map((name) => {
   const e = M.project(name), s = swing[name], dt = Math.min(0.05, Math.max(0.001, T - s.t))
   const vx = s.x === null ? 0 : (e.x - s.x) / Math.max(0.001, T - s.t)
@@ -67,8 +67,20 @@ const EARS = (M, T) => ['lobeL', 'lobeR'].map((name) => {
   s.x = e.x; s.t = T
   const vis = earVisibility(e.facing) * (e.x > -50 && e.x < M.W + 50 && e.y > -50 && e.y < M.H + 50 ? 1 : 0)
   s.vis += (vis - s.vis) * (1 - Math.exp(-dt * 18)) // smooth fade, never a blink
-  return { lobe: { x: e.x, y: e.y }, swing: s.a, vis: s.vis, facing: e.facing }
+  return { name, lobe: { x: e.x, y: e.y }, swing: s.a, vis: s.vis, facing: e.facing, away: earAway(e.facing) }
 })
+// An ear turned away from the camera is BEHIND the face: draw its earring on its own layer and cut the face outline out of it,
+// so the part behind the cheek / jaw is hidden and the part hanging below the jaw stays visible (real occlusion, no fade).
+let earLayer = null
+function earPass(c, M, e, draw) {
+  if (e.away < 0.01) { c.save(); c.globalAlpha *= e.vis; draw(c); c.restore(); return }
+  earLayer = earLayer || document.createElement('canvas'); if (earLayer.width !== c.canvas.width || earLayer.height !== c.canvas.height) { earLayer.width = c.canvas.width; earLayer.height = c.canvas.height }
+  const L = earLayer.getContext('2d'); L.setTransform(1, 0, 0, 1, 0, 0); L.clearRect(0, 0, earLayer.width, earLayer.height)
+  draw(L)
+  L.save(); L.globalCompositeOperation = 'destination-out'; L.globalAlpha = e.away; L.beginPath()
+  FACE_OVAL.forEach((i, k) => (k ? L.lineTo(M.P[i].x, M.P[i].y) : L.moveTo(M.P[i].x, M.P[i].y))); L.closePath(); L.fill(); L.restore()
+  c.save(); c.globalAlpha *= e.vis; c.drawImage(earLayer, 0, 0); c.restore()
+}
 
 const ear = {
   studs: (c, u, col, T) => bezel(c, col, 0, u * 0.02, u * 0.022, T),
@@ -108,14 +120,32 @@ const nose = (c, M, id, col, u, T, side) => {
   c.restore()
 }
 
-// Necklaces use the shoulders when the pose model has found them (M.shoulders), otherwise they are estimated from the face.
-// Size follows shoulder width (or face width), and the necklace turns with the shoulder line (or head tilt).
+// Where a necklace sits: the collarbone notch at the base of the neck, which belongs to the BODY, not the head.
+//  - Shoulders found by the body model (M.shoulders): 0.2 shoulder-widths above the middle of the shoulder joints, tilted with
+//    the shoulder line. Measured on a 3D head scan whose head turns and nods while the body stays still: 0.4 to 1 cm error,
+//    where the previous head-based position slid 3 to 5 cm up the throat or sideways.
+//  - No shoulders (close-up, body model still loading): estimated from the head, following only half of the head's rotation.
+//  - Switching between the two blends over ~0.12 s, so the necklace never jumps when body tracking comes or goes, and a body
+//    reading more than 6 cm from the head estimate (a wrong detection) is not used.
+const NF = { w: 0, body: null, rot: 0, t: null }
+export function neckFrame(M, T) {
+  const dt = NF.t === null ? 1 : Math.min(0.2, Math.max(0, T - NF.t)); NF.t = T
+  const head = M.projectPartial ? M.projectPartial('neck', 0.5) : M.project('neck'), S = M.shoulders
+  let target = 0
+  if (S) {
+    const sw = Math.hypot(S.r.x - S.l.x, S.r.y - S.l.y), ux = { x: (S.r.x - S.l.x) / sw, y: (S.r.y - S.l.y) / sw }
+    const b = { x: (S.l.x + S.r.x) / 2 + ux.y * 0.2 * sw, y: (S.l.y + S.r.y) / 2 - ux.x * 0.2 * sw }
+    if (Math.hypot(b.x - head.x, b.y - head.y) < 6 * M.cm) { target = 1; NF.body = b; NF.rot = Math.atan2(ux.y, ux.x) }
+  }
+  NF.w += (target - NF.w) * (1 - Math.exp(-dt * 8))
+  const w = NF.body ? NF.w : 0, hr = M.roll * 0.35
+  return { o: { x: head.x + ((NF.body?.x ?? 0) - head.x) * w, y: head.y + ((NF.body?.y ?? 0) - head.y) * w }, rot: hr + (NF.rot - hr) * w }
+}
+let NECK = null // this frame's neck frame (computed once, used by every necklace)
 function neck(c, M, id, col, u, T) {
-  const { P, fw3: fw, fh, roll } = M, S = M.shoulders, k = u / fw // k = 1 at the default size
+  const { fw3: fw } = M, k = u / fw // k = 1 at the default size
   const long = id === 'chain' || id === 'pendant'
-  // Position: ALWAYS the base of the neck from the 3D head fit (so the necklace never jumps when body tracking comes and goes).
-  // The shoulder line from the body model, when available, only sets the tilt (the neck turns less than the head).
-  const o = M.project('neck'), rot = S ? Math.atan2(S.r.y - S.l.y, S.r.x - S.l.x) : roll * 0.5
+  const { o, rot } = NECK
   const A = { x: -fw * 0.36 * k, y: -fw * 0.18 }, B = { x: fw * 0.36 * k, y: -fw * 0.18 }, K = { x: 0, y: fw * (long ? 1.1 : 0.5) * k }
   at(c, o.x, o.y, rot, () => {
     if (id === 'necklace') { // beaded necklace with a centre gem
@@ -162,6 +192,7 @@ export function drawJewellery(c, M, state, T) {
   if (state.tiara) tiara(c, M, col('tiara'), U('tiara'), T)
   const necks = ['necklace', 'chain', 'pendant'].filter((id) => state[id])
   if (necks.length || PHOTO_NECKS().some((p) => state[p.id])) {
+    NECK = neckFrame(M, T)
     layer = layer || document.createElement('canvas'); if (layer.width !== c.canvas.width || layer.height !== c.canvas.height) { layer.width = c.canvas.width; layer.height = c.canvas.height }
     const L = layer.getContext('2d'); L.clearRect(0, 0, layer.width, layer.height)
     necks.forEach((id) => neck(L, M, id, col(id), U(id), T))
@@ -170,21 +201,22 @@ export function drawJewellery(c, M, state, T) {
     c.drawImage(layer, 0, 0)
   }
   const ears = EARS(M, T)
-  ;['studs', 'earrings', 'hoops', 'jhumkas'].forEach((id) => {
-    if (!state[id]) return
-    ears.forEach((e) => { if (e.vis > 0.02) { c.save(); c.globalAlpha *= e.vis; at(c, e.lobe.x, e.lobe.y, e.swing, () => ear[id](c, U(id), col(id), T, M)); c.restore() } })
-  })
-  PHOTO_EARS().forEach((p) => {
-    if (!state[p.id]) return
-    const im = imgOf(p); if (!im) return
-    const k = 0.75 + state[p.id].v * 0.5, h = p.hcm * M.cm * k, w = (h * im.naturalWidth) / im.naturalHeight
-    ears.forEach((e) => { if (e.vis > 0.02) { c.save(); c.globalAlpha *= e.vis; at(c, e.lobe.x, e.lobe.y, e.swing, () => withShadow(c, M.cm, () => c.drawImage(im, -w * p.hook[0], -h * p.hook[1], w, h))); c.restore() } })
+  const drawn = ['studs', 'earrings', 'hoops', 'jhumkas'].filter((id) => state[id]), photos = PHOTO_EARS().filter((p) => state[p.id] && imgOf(p))
+  if (drawn.length || photos.length) ears.forEach((e) => {
+    if (e.vis <= 0.02) return
+    earPass(c, M, e, (x) => {
+      drawn.forEach((id) => at(x, e.lobe.x, e.lobe.y, e.swing, () => ear[id](x, U(id), col(id), T, M)))
+      photos.forEach((p) => {
+        const im = imgOf(p), k = 0.75 + state[p.id].v * 0.5, h = p.hcm * M.cm * k, w = (h * im.naturalWidth) / im.naturalHeight
+        at(x, e.lobe.x, e.lobe.y, e.swing, () => withShadow(x, M.cm, () => x.drawImage(im, -w * p.hook[0], -h * p.hook[1], w, h)))
+      })
+    })
   })
   ;['nosering', 'nosepin'].forEach((id) => { if (state[id]) nose(c, M, id, col(id), U(id), T, state[id].side === 'right' ? 'noseL' : 'noseR') })
 }
 function photoNeck(c, M, p, st) {
   const im = imgOf(p); if (!im) return
-  const S = M.shoulders, o = M.project('neck'), rot = S ? Math.atan2(S.r.y - S.l.y, S.r.x - S.l.x) : M.roll * 0.5
+  const { o, rot } = NECK
   const k = 0.8 + st.v * 0.4, w = p.wcm * M.cm * k, h = (w * im.naturalHeight) / im.naturalWidth
   at(c, o.x, o.y, rot, () => withShadow(c, M.cm, () => c.drawImage(im, -w / 2, -p.top * M.cm, w, h)))
 }

@@ -10,17 +10,22 @@
     "build": "vite build",
     "preview": "vite preview",
     "fetch-models": "node scripts/fetch-models.mjs",
-    "server": "node server/index.js"
+    "start": "node backend/server.js",
+    "test": "npm run test:backend",
+    "test:backend": "node --test tests/backend/api.test.mjs tests/backend/netlify-bundle.test.mjs",
+    "test:tracking": "node tests/rig/tune.mjs"
   },
   "dependencies": {
     "@gradio/client": "^1.19.1",
     "@mediapipe/tasks-vision": "0.10.17",
+    "@netlify/blobs": "^11.1.7",
     "three": "^0.170.0"
   },
   "devDependencies": {
+    "esbuild": "^0.21.5",
     "vite": "^5.4.11"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

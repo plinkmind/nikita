@@ -1,6 +1,87 @@
 # Tracking audit
 
-## Update 6 (latest): root causes confirmed with the real models
+## Update 10 (latest): full re-audit, 3D face mask, category pipelines
+Everything below was checked in the current source code and measured with the real MediaPipe models (headless Chromium,
+software rendering) on the 3D head-scan rig (`tests/rig/`: a scanned human head rendered at known turns, nods, tilts,
+distances and lighting, so the true position of every point is known).
+
+### Phase 1: how the live studio works today
+| Question | Answer (from the code) |
+|---|---|
+| Face model | MediaPipe **Face Landmarker** (float16, 478 points, VIDEO mode, 1 face, GPU with CPU fallback). Confidence 0.5 / 0.6 / 0.5. `track/mediapipe.js` |
+| Hand model | MediaPipe **Hand Landmarker** (2 hands, 21 picture points + 21 3D "world" points in metres per hand). Only loaded for nails (and, on computers, for hand-in-front-of-face occlusion). |
+| Body model | MediaPipe **Pose Landmarker**: lite on phones, full on computers. Only loaded for outfits and necklaces. |
+| Hair | MediaPipe image segmenter (hair = class 1). Only loaded for hair colour. |
+| Camera frames | `getUserMedia` front camera (960x720 phones, 1280x720 computers). Each NEW camera frame (requestVideoFrameCallback) is analysed once by every model it needs, and that same frame is drawn with those results. |
+| 2D -> 3D | MediaPipe's canonical 3D face (468 vertices, cm) is fitted to 36 rigid landmarks every frame (rotation + scale + position, Horn's method) -> real head turn, nod, roll and true size. Expression (lips, lids, brows) is the landmark offset in the head's own frame. Ear lobes, nose piercings and the neck are fixed 3D points on the fitted head. `track/head.js` |
+| Three.js | Used only for the homepage animation. The studio draws on a canvas the size of the camera frame; there is no separate 3D camera that can drift out of line with the picture. New in this update: a WebGL face mesh that uses exactly the same pixel coordinates. |
+| Confidence | Detector thresholds, plus a shape check (landmark sets that do not fit a face are rejected), plus presence fade (in 90 ms, hold 160 ms, out 240 ms), plus hands needing 2 frames in a row before they hide anything. |
+| Mirroring, aspect ratio, canvas size, pixel ratio | Checked again: models analyse the un-mirrored camera frame; mirroring is applied once to the 2D output; the canvas equals the camera resolution; the preview box takes the camera aspect ratio; CSS scales it for any screen pixel ratio. Overlays and picture always share one coordinate system. |
+
+### Phase 2: head tracking - measured, kept
+The rig was replayed with webcam-like jitter added to the landmarks (0.9 px per point plus a shared shift, same as
+`tests/harness.js`). `node tests/rig/tune.mjs`:
+
+| | Still jitter | Error while moving (surface points) | Ear-lobe error | Head-turn error |
+|---|---|---|---|---|
+| No filter (raw detector) | 2.00 px | 0.21 cm | 0.50 cm | 2.6 deg |
+| Current filter | **0.47 px** | 0.25 cm | 0.50 cm | 2.6 deg |
+
+I tried 54 other filter settings, including lag compensation (prediction from the measured speed). None was better on
+both stillness and lag at the same time, only different trade-offs. So the head filter was kept as it is. The
+remaining error while moving is mostly the face model itself (0.21 cm before any filtering), not the smoothing.
+
+### Phase 3: root cause still present, and fixed - skin products were flat stickers
+Foundation, concealer, blush and highlighter were 2D shapes (ovals and polygons) placed between landmarks. Measured on the
+rig: up to **2,362 pixels of blush/foundation painted on the background** outside the head (nodding down 23 deg), 615 px
+at a 20 deg turn, 645 px close to the camera. A 2D oval also does not bend around the cheek or narrow when the head turns.
+
+**Fix: a real 3D face mask** (`src/tryon/render/facemesh.js`). The 468 tracked points are drawn as MediaPipe's own
+898-triangle face mesh in WebGL, with depth (z) from the 3D head fit, a depth buffer, and a surface direction per vertex.
+Each skin product is painted once in the face's texture space (`track/facemesh.js`, UV coordinates from MediaPipe's
+canonical face model) using the same anatomical landmarks as before, and the mesh wraps it onto the live face every frame.
+Paint now stretches and foreshortens with the cheek, follows expressions (it is attached to the moving vertices), is hidden
+where the nose covers the far cheek, and fades on surfaces seen edge-on.
+
+| Pose (rig) | Paint outside the head, 2D | Paint outside the head, 3D mask |
+|---|---|---|
+| Front | 0 px | 0 px |
+| Turn 20 deg | 615 px | 0 px |
+| Turn 34 deg | 19 px | 4 px |
+| Turn -46 deg | 0 px | 43 px (mesh edge, anti-aliasing) |
+| Nod down 23 deg | **2,362 px** | 0 px |
+| Look up 20 deg | 146 px | 0 px |
+| Tilt 20 deg | 2 px | 0 px |
+| Close (38 cm) | 645 px | 0 px |
+| Far (90 cm) | 0 px | 0 px |
+
+The 2D renderer stays as automatic fallback (no WebGL, or the WebGL context is lost). `?mesh=0` forces it, for comparison.
+Lips, eyeliner, eyeshadow, mascara and brows were already traced directly along their landmark contours and were not changed.
+
+### Phase 4/7: anchors and category pipelines (checked, `tests/e2e/categories.e2e.mjs`)
+| Category | Models that run | Anchors |
+|---|---|---|
+| Makeup | face (+ hand on computers, only to keep a hand in front of the face uncovered) | lip / eye / brow contours, 3D face mask for skin |
+| Jewellery | face + body (necklaces) | separate left/right ear lobes (3D head points, own visibility each), nostril, neck from the shoulders |
+| Hair | face + hair segmentation | your real hair pixels |
+| Nails | hand | each nail from the finger's 3D bones |
+| Outfit | body | shoulders, torso, hips |
+
+Fixed in this update: the hand model that only serves occlusion showed "Loading hand tracking..." on the makeup tab - it
+now loads silently. A model that fails to download is no longer retried (with its "Loading..." note) every 8 seconds
+forever: after 3 failures it waits until the studio is opened again. Hand instructions appear only on the Nails tab.
+
+### What still needs outside models or assets (not fixable with overlays)
+- **Nails**: MediaPipe has no nail-segmentation model, so the nail outline is estimated from the finger bones (shaped nail
+  outlines, not rectangles, but not the real nail edge).
+- **Hairstyles**: a live overlay cannot look like real hair; live mode recolours your real hair, cuts are made by the AI photo mode.
+- **Outfits**: live mode places your garment photo on the shoulders and torso; it is not 3D cloth. Realistic results need the AI try-on (See It On You).
+- **Lighting colour**: makeup blends with the real skin (multiply/soft-light/screen), but jewellery colours do not adapt to a warm or dim room.
+- **Not tested here**: a real phone GPU, a real camera, a real person. Speed numbers from this sandbox (software rendering, no GPU) do not say how fast it runs on Android Chrome.
+
+---
+
+## Update 6: root causes confirmed with the real models
 This section supersedes the tables further down where they disagree. Everything here was measured with the real MediaPipe
 models on real photos (see `TESTING-REPORT.md`).
 

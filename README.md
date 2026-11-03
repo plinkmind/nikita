@@ -1,7 +1,10 @@
 # Glamify XR (Responsive Version)
 
 One website, one codebase. The same page adapts to phones, tablets, laptops and desktops.
-Built with Vite, Three.js and MediaPipe Face Landmarker.
+Built with Vite, Three.js and MediaPipe Face Landmarker, plus a backend (accounts, AI try-on, history) in `backend/`.
+
+> **Start here for the current version: section O (backend).** Sections I and K describe an older separate AI server
+> (`server/`) that has been **replaced** by the new backend.
 
 ---
 
@@ -223,128 +226,94 @@ Read `FIX-REPORT.md` first (root causes, measured before/after), then `TESTING-R
 **Photo jewellery:** Jewellery tab > "Product photos (demo)". To add your own product, see the comment above `photo(...)` in
 `src/tryon/jewellery.js` and list its id in `src/tryon/catalog.js`. Replace the demo images before going live.
 
-**AI outfits with FASHN (recommended):** create an API key at https://app.fashn.ai, then on the AI server set
+**(Replaced by section O.)** AI outfits with FASHN: create an API key at https://app.fashn.ai, then on the AI server set
 `TRYON_PROVIDER=fashn` and `FASHN_API_KEY=...` (see `server/.env.example`). Hairstyles still need the Google Cloud setup from
 section I. A server with only FASHN offers outfits and honestly reports hairstyles as not set up. Deploy the server as in section I
 (it runs anywhere Node 18+ runs; with FASHN only, no Google project is needed: e.g. Render, Railway, Fly.io or Cloud Run).
 
 ---
 
-## L. Turn on AI Photo try-on (Netlify, no separate server) - Update 6.2
-The AI Photo tab now talks to a **Netlify Function** inside this same site (`netlify/functions/tryon.mjs`). You do not deploy any
-server. You only add API keys in Netlify. Until a key is added, the tab honestly says that mode is not set up.
+## O. Update 9: complete backend (accounts, AI try-on API, private images, history)
 
-| Mode | Service | Key name in Netlify | Where to get it | Cost (check their pricing page) |
-|---|---|---|---|---|
-| AI outfits | FASHN tryon-v1.6 | `FASHN_API_KEY` | https://app.fashn.ai > API Keys (add credits first) | about $0.075 per image |
-| AI hairstyles | FLUX.1 Kontext [pro] on Replicate | `REPLICATE_API_TOKEN` | https://replicate.com/account/api-tokens (add billing first) | about $0.04 per image |
+Read `docs/BACKEND.md` (how it is built) and `docs/API.md` (every endpoint). Tests: `TESTING-REPORT.md` (top section).
 
-1. Netlify > your site > **Site configuration > Environment variables > Add a variable**. Add `FASHN_API_KEY` and/or
-   `REPLICATE_API_TOKEN` (scope: at least "Functions"). Do **not** put them in `.env` files that go to GitHub.
-2. If you ever set `VITE_TRYON_API_URL`, delete it (empty = use this site's own function).
-3. Push the code (below). Netlify builds the site and the function automatically.
-4. Open the site > Try It On > **AI Photo** > **Check again**. Outfit and/or Hairstyle should now be available.
-5. Set a monthly spending limit in your FASHN and Replicate accounts (anyone who can open your site can use the button).
+### What you get
+- **Accounts** (optional): sign up, sign in, sign out, profile, delete account. Header button **Sign in** (shows your name when
+  signed in). **Guests** can do everything; their looks are kept 24 hours and move into the account if they sign up.
+- **See It On You** now saves every look to **My looks** (history) with view, download and delete.
+- **Private images**: only the owner can open their results; uploaded photos are deleted as soon as the AI has finished.
+- **Live camera studio**: unchanged (it never needed a server).
 
-Optional variables: `FASHN_MODE` (quality | balanced | performance), `REPLICATE_HAIR_MODEL`, `RATE_MAX` (tries per visitor per
-10 minutes, default 8), `ALLOWED_ORIGINS` (extra domains allowed to call the function).
+### Free or paid?
+| Part | Cost | What you need to do |
+|---|---|---|
+| Backend, database (Netlify Blobs), accounts, history | **Free** on Netlify's free plan | nothing: it deploys with the site |
+| AI outfit try-on, **free mode** (IDM-VTON on Hugging Face) | **Free** | nothing (on by default). Limits: queue, small daily quota per visitor, best for tops, **non-commercial licence** |
+| AI outfit try-on, **FASHN** (better, faster, commercial use) | **Paid**, about $0.075 per image | add `FASHN_API_KEY` in Netlify; the site switches to it automatically |
+| AI hairstyles (studio > AI Photo) | **Paid**, about $0.04 per image (no free option exists) | add `REPLICATE_API_TOKEN` |
+| Netlify free plan | 300 credits/month | **each `git push` (production deploy) costs 15 credits**; when credits run out Netlify pauses the site until next month. Push less often (batch changes) |
 
-Test the function on your computer without keys (uses pretend services): `node tests/functions.test.mjs`.
-To try it locally with real keys: `npx netlify-cli dev` (reads keys from your Netlify site after `npx netlify-cli link`).
-
-The older Node server in `server/` (Google Cloud / FASHN) still works if you prefer a separate server; you do not need it on Netlify.
-
-### Update and deploy (every time)
+### Run everything on your computer (one command)
 ```
 npm install
-npm run build
-git add .
-git commit -m "Update 6.2: tracking fixes, photo jewellery, AI photo try-on via Netlify Functions"
-git push
+npm run dev
 ```
-`npm run build` is only a local check that everything compiles; Netlify runs its own build after `git push`.
+Opens http://localhost:5173 with the website **and** the API (`/api/...`). Data is saved in the `.data/` folder (ignored by git).
+Optional keys: copy `.env.example` to `.env` and fill in what you need.
+
+Production-like test: `npm run build` then `npm start` (website + API on http://localhost:8787).
+
+### Deploy on Netlify (your current site)
+1. Unzip this update over your project folder (keep your `.git` folder). Delete the old `server/` folder and
+   `netlify/functions/tryon.mjs` if they are still there (both are replaced).
+2. In VS Code's terminal:
+   ```
+   npm install
+   npm run build
+   git add .
+   git commit -m "Update 9: backend with accounts, AI try-on API and history"
+   git push
+   ```
+3. Netlify builds the site and the functions automatically (`netlify/functions/api.mjs` = the API, `cleanup.mjs` = hourly
+   clean-up). Netlify Blobs needs no setup.
+4. Check: open `https://<your-site>.netlify.app/api/health`. You should see `"ok":true` and `"storage":"blobs"`.
+5. Optional, for paid AI: Netlify > your site > **Site configuration > Environment variables** > add `FASHN_API_KEY`
+   and/or `REPLICATE_API_TOKEN`, then **Deploys > Trigger deploy**. Remove the old `VITE_TRYON_API_URL` if it exists.
+
+Other hosts (VPS, Render, Railway, Docker): `npm install && npm run build && npm start`. Data goes to `DATA_DIR` (a folder
+that must be kept between restarts: a "persistent disk"). Put the settings from `.env.example` in the host's environment.
+
+### Tests
+```
+npm run test:backend        # 55 backend tests: accounts, security, uploads, AI flows (mocked), history, clean-up, on 3 storage drivers
+```
+Browser tests (need Playwright): see the top of `TESTING-REPORT.md`.
+
+### Database: where is my data and how do I see it?
+- On Netlify: **Netlify > your site > Blobs** (stores `glamify-db` and `glamify-files`).
+- On your computer: the `.data/` folder (`.data/db/...` records, `.data/files/...` images).
+- Backup: copy the `.data` folder, or use `npx netlify-cli blobs:list glamify-db`.
+
+### If something does not work
+| You see | Fix |
+|---|---|
+| "The Glamify server is not available here" | You opened the site with a plain file server. Use `npm run dev`, `npm start`, or Netlify |
+| `/api/health` gives "Page not found" on Netlify | The update was not deployed: check the deploy log; `netlify/functions/api.mjs` must be in the repo |
+| "AI outfit try-on is switched off" | `FREE_TRYON=false` is set and there is no `FASHN_API_KEY` |
+| Free mode: "daily limit used up" | Hugging Face's free GPU time for that visitor is used up; it resets within 24 h |
+| Site shows "Site not available" | Netlify credits used up for this month (see the table above) |
 
 ---
 
-## M. "See It On You": AI virtual outfit try-on (photo based)
-A separate experience from the live camera mirror. Buttons: **See It On You** (header) and **See it on you (AI photo)** (last
-chapter). Code: `src/aitryon/` (page), `netlify/functions/tryon.mjs` (secure backend, shared with the studio's AI Photo tab).
+## P. Update 10: live AR tracking audit and 3D face mask
 
-**How it works:** the visitor uploads a photo of themselves and a photo of a garment, ticks the consent box and presses
-**Generate My Look**. The browser checks and shrinks both photos (JPG/PNG/WebP, max 15 MB, min 300 px, phone rotation fixed,
-re-saved as JPEG max 1536 px), sends them to **your own Netlify Function**, which forwards them to **FASHN** (and nowhere else),
-then asks FASHN for the status every 2 seconds. The page shows FASHN's real stage ("waiting", "generating") and the real elapsed
-time, then the generated image with a draggable before/after comparison, **Download result**, **Try another outfit** and
-**Start over**. If the key is missing or FASHN fails, the page says so and shows no result: there is no fake or sample image.
+What changed for you (nothing to set up):
+- **Foundation, concealer, blush and highlighter now sit on a real 3D model of your face** (468 tracked points, 898 triangles,
+  drawn with WebGL). They bend around the cheek, follow smiles, get narrower when you turn your head and no longer spill
+  onto the background when you nod or come close to the camera. Phones without WebGL automatically use the old 2D drawing.
+- The makeup tab no longer shows "Loading hand tracking..." (that model only runs in the background to keep your hand in
+  front of the makeup). A model that cannot download no longer shows "Loading..." again every few seconds.
+- Head tracking was measured again and kept: it already removes about 75% of the shake with little delay.
 
-### The AI model: FASHN tryon-v1.6
-- A model built only for virtual try-on: input = person photo + garment photo, output = the person wearing that garment.
-- Clothing types: tops (shirts, T-shirts, jackets, sweaters), bottoms, one-pieces (dresses, jumpsuits, kurtas/anarkalis); "Detect
-  automatically" lets FASHN decide.
-- Garment photo can be flat-lay, on a hanger, ghost mannequin or worn by a model.
-- Speed (FASHN's documentation): about 12 to 17 s in "quality" mode (default here), about 8 s "balanced", about 5 s "performance".
-  Output is about 864 x 1296 px.
-- Price: about **$0.075 per generated image** (1 FASHN credit). Check https://fashn.ai/pricing. Rate limit 25 per minute.
-- Why not IDM-VTON / CatVTON / OOTDiffusion: their licences are non-commercial and they need your own GPU server (see
-  `TRYON-MODELS.md`).
-
-### Limitations (please read)
-- It is a generated image. Faces are usually preserved, but small changes in the face, hands or background can happen.
-- One garment per generation (to try a top AND a jacket, generate twice, using the first result as "your photo").
-- Very loose layers (a dupatta, a long open jacket), heavy embroidery and fine text can be simplified.
-- Best input: one person, facing the camera, standing straight, arms slightly away from the body, even light, plain background.
-- Fit and size are a visual impression only, not a size recommendation.
-
-### Setup (5 minutes)
-1. Create an account at https://app.fashn.ai, buy a small amount of credit, open **API Keys** and create a key.
-2. Netlify > your site > **Site configuration > Environment variables > Add a variable**: `FASHN_API_KEY` = your key.
-   (Optional: `FASHN_MODE` = `balanced` for faster results.) Leave `VITE_TRYON_API_URL` empty or delete it.
-3. Push the code (commands below). Netlify builds the site and the function.
-4. Open the site > **See It On You**. The "not switched on" message is gone; upload two photos and generate.
-5. In FASHN's dashboard, keep a low credit balance or set a spending limit: anyone who opens your site can press the button. The
-   function also limits each visitor to 8 tries per 10 minutes (`RATE_MAX`) and only accepts requests from your own site.
-
-**Privacy:** photos travel browser > your Netlify Function > FASHN only. The function stores nothing and never logs images.
-The result is returned directly (base64), so it is not left on a public link. FASHN processes the photos under its own terms;
-the consent text names FASHN.
-
-### Test it locally
-- With a real key, the full site and the function: `npx netlify-cli dev` (after `npx netlify-cli link`).
-- Without a key (uses a local MOCK of FASHN that returns a stamped "TEST MOCK RESULT - NOT AI" image):
-  `npm run build` then `MOCK=1 node tests/serve.mjs 5300`, open http://localhost:5300.
-- Automated: `node tests/functions.test.mjs` (backend) and `node tests/aitryon.e2e.mjs` (browser flow; see the file header).
-
----
-
-## N. Update 8: FREE AI try-on (no API key, no cost) + live tracking speed fixes
-
-### Free mode for "See It On You"
-If no `FASHN_API_KEY` is set in Netlify, "See It On You" now works **for free** using the public **IDM-VTON** research demo on
-Hugging Face (https://huggingface.co/spaces/yisol/IDM-VTON). Nothing to configure: just push the code.
-- The visitor's own browser sends the two photos to Hugging Face with Hugging Face's official client (`@gradio/client`). No key,
-  no payment, nothing passes through or is stored by Glamify.
-- **Limits of a free shared demo (please read):**
-  - Queue: when many people use it, results take from 30 seconds to a few minutes. The page shows the real queue position.
-  - Daily limit: Hugging Face gives each visitor a small amount of free GPU time per day (a few generations). When it is used
-    up, the page says so ("try again later").
-  - Availability: the demo is run by its authors, not by us. It can be asleep, busy or removed. The page then says the free
-    service is not reachable; it never shows a fake result.
-  - Quality: IDM-VTON is trained on **upper-body garments**: tops, shirts, T-shirts, jackets work best. Dresses, kurtas and
-    trousers may not transfer fully. Faces are usually kept.
-  - **Licence: CC BY-NC-SA 4.0, non-commercial.** Fine for demos, testing and showing the concept. For a paid/commercial
-    service, switch to FASHN (README section M): set `FASHN_API_KEY` and the page uses FASHN automatically.
-- Options (Netlify environment variables, then redeploy): `VITE_FREE_TRYON=off` hides free mode; `VITE_FREE_TRYON_SPACE` points
-  to another copy of the Space (for example your own duplicate of it on Hugging Face, which gets its own GPU quota).
-- Tested here against a local copy of the Space's exact interface (Gradio 4.24, same `/tryon` endpoint and inputs):
-  `tests/standin/idm_vton_standin.py`. The live Hugging Face Space could not be reached from the test machine, so the first
-  real generation happens on your site.
-
-### Live tracking: speed and stability fixes
-- New camera frames are detected with the browser's frame callback (exact) instead of the video clock. On browsers where the
-  clock updates coarsely, tracking could run at a fraction of the camera rate.
-- Automatic load saving: if a frame takes longer than the camera interval, the extra models (hair mask, body, hand occlusion)
-  run less often. The face model always runs on every frame.
-- Hand-in-front-of-face occlusion only acts on a hand seen in at least two frames (a single wrong reading no longer erases
-  makeup or earrings), and runs every 3rd frame (every 6th when no hand is around).
-- `?debug` now shows the frame time, the load-saving level and whether the models run on the GPU or the CPU. **If tracking still
-  looks poor, open the site with `?debug`, press Try It On and send a screenshot or short recording, with what looks wrong.**
+Compare old and new on your phone: open `https://your-site/?mesh=0` (old 2D drawing) and the normal address (3D mask).
+Full audit and measurements: `TRACKING-AUDIT.md`, `TESTING-REPORT.md`.

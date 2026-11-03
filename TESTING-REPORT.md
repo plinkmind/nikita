@@ -1,7 +1,71 @@
-# Testing report (Update 6 + 6.1)
+# Testing report
 
-**6.1:** your screen recording was analysed frame by frame; garment cut-out tested on all 7 garment photos you sent; garment fit on your full-body model photo; hand-in-front-of-necklace occlusion; makeup look re-rendered. See FIX-REPORT.md section 6.1.
+## Update 10: AR tracking re-audit and 3D face mask
 
+**Environment:** headless Chromium, software GPU (SwiftShader), real MediaPipe models from `public/models`, fake camera made
+from a scanned 3D head (`tests/rig/`) turning, nodding, tilting, moving closer/farther, dim and warm light, leaving and
+coming back. No phone, real camera or real person was available, and the sandbox has no GPU, so speed is not measured.
+
+| Test | Result |
+|---|---|
+| Head tracker on the rig with webcam-like landmark jitter (`node tests/rig/tune.mjs`): still jitter 2.00 -> 0.47 px, movement error 0.21 cm (raw) / 0.25 cm (filtered), 54 alternative filter settings compared | current settings kept (no setting better on both) |
+| Skin makeup (foundation, concealer, blush, highlighter) at 9 head poses, 2D vs new 3D face mask: paint landing outside the head | 2D: up to 2,362 px; 3D mask: 0 px at 8 poses, 43 px at a 46 deg turn (mesh edge) |
+| Category switching in the full studio (`tests/e2e/categories.e2e.mjs`): makeup -> nails -> makeup -> remove nails -> jewellery -> hair -> outfit -> reset; models loaded per category, guidance text per tab, 3D mask active | pass: hand instructions only on the Nails tab; body model loads for necklace/outfit, hair model for hair colour; mask active |
+| Console errors during the whole run | none from the site (only "request failed" for outside websites, the sandbox has no internet) |
+| Backend suite (unchanged backend) | 55/55 pass |
+
+Found and fixed: hand-occlusion model showed "Loading hand tracking..." on the makeup tab; a model that cannot download was
+retried with a "Loading..." note every 8 s forever.
+
+**Not tested:** real Android/iPhone (GPU speed of the WebGL mask, camera quality), a real person, real room lighting.
+
+### Re-run
+```
+npm run fetch-models
+VITE_MODEL_BASE=/models/ VITE_DELEGATE=CPU VITE_HAIR_MODEL=hair npx vite --port 5199      # terminal 1
+node tests/rig/tune.mjs                                                                    # filter comparison (Node only)
+node tests/rig/run.mjs "test=look" out.png              # makeup + jewellery on the head at 5 poses (add &mesh=0 for 2D)
+node tests/rig/make-video.mjs rig.y4m                   # fake camera video of the head (see its header)
+node tests/e2e/categories.e2e.mjs rig.y4m out.json      # category switching in the full studio
+```
+
+---
+
+## Update 9: backend (accounts, AI try-on API, private images, history)
+
+**Environment:** this project's real code, Node 22, headless Chromium (Playwright). The paid AI services were replaced by local
+**mocks of their documented APIs** (FASHN, Replicate) and the free Hugging Face Space by a **local copy of its exact interface**
+(Gradio 4.24.0, same `/tryon` endpoint and inputs, `tests/standin/`). Netlify Blobs was tested with Netlify's own local Blobs
+server (`@netlify/blobs/server`). No real AI generation, no real Netlify deploy and no phone could be tested here.
+
+| Test | Result |
+|---|---|
+| Backend suite, 18 scenarios x 3 storage drivers (memory, folder, Netlify Blobs): registration + validation, secure cookies, login/logout/session expiry, same message for unknown e-mail / wrong password, login rate limit, profile, CSRF + CORS + 404/405/400/413, upload validation (fake SVG, too small, missing, wrong type), FASHN flow with real result image and photos deleted afterwards, other users cannot read jobs/images, FASHN failures (pose, bad key, not-an-image) never produce a result, retry after "busy", free mode complete/fail, history order + delete (files really removed), guest looks moved into a new account, Replicate hairstyles, "not switched on" answers, generate rate limit, clean-up of expired looks / leftover photos / stuck jobs, account deletion removes all data, generic 500 messages | **54/54 pass** |
+| Bundled Netlify function (esbuild, as Netlify builds it) with only Netlify's own environment (`NETLIFY_BLOBS_CONTEXT`): Blobs chosen automatically, Secure cookies, sign-up, free try-on, private image, scheduled clean-up | **1/1 pass** |
+| Browser, website + real backend, FASHN mock, desktop 1440x900 and phone 390x844: guest generate (upload, loading stage, result from the private image URL, download), My looks, sign up from the guest notice (look moved into the account), header shows the name, second look, delete, sign out, wrong password message, sign in again, history back, failed generation shows a clear message and no image, no sideways scrolling | **36/36 pass** |
+| Same browser flow in **free mode** against the local IDM-VTON copy (photos sent from the browser, result saved through `/complete`) | **34/34 pass** |
+| Free-mode edge cases: website on a plain file host with no backend (free mode still works, result marked "not saved"); free service down (clear message, attempt recorded as failed) | **4/4 pass** |
+| `npm run dev` (API inside Vite) and `npm start` (standalone server): health, sign-up, website files, WASM content type, missing files 404, path traversal blocked | pass |
+| Live camera studio regression (fake camera, real MediaPipe face + hand models): lipstick, blush, kundan jhumkas on the ear lobes, face tracked every frame, hand found for occlusion | pass (ear positions identical to the previous version) |
+
+Found and fixed during testing: browser form builder bug (uploads failed), typed e-mail lost after a wrong password, a failed
+free attempt shown as "in progress" in history, empty numeric settings read as 0, missing files served as the homepage.
+
+**Not tested (needs you / real services):** a real FASHN, Replicate or Hugging Face generation; a real Netlify deploy and
+Netlify's real Blobs service; real phones; many simultaneous users.
+
+### Re-run
+```
+npm install && npm run test:backend
+npm run build && MODE=fashn node tests/e2e/serve.mjs 5300                       # terminal 1
+node tests/e2e/fullstack.e2e.mjs http://127.0.0.1:5300 . tests/img/portrait.png tests/img/pose.jpg fashn   # terminal 2 (needs playwright)
+```
+Free mode: start the stand-in (`tests/standin/idm_vton_standin.py`, setup in its header), then
+`MODE=free FREE_TRYON_SPACE=http://127.0.0.1:7861/ node tests/e2e/serve.mjs 5310` and run the same test with `free`.
+
+---
+
+## Update 6
 
 ## Environment
 - Headless Chromium (Playwright), software rendering, MediaPipe Tasks Vision 0.10.17 (the version the site uses).

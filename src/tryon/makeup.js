@@ -5,6 +5,7 @@
 // face that turns away from the camera (from the 3D head rotation) instead of being painted on a cheek you cannot see.
 import { tintRegion, meanLum } from './render/tint.js'
 import { rotate } from './track/geometry.js'
+import { uv, CM_U, CM_V } from './render/facemesh.js'
 const BIG = 6000
 const sh = (n, c, m) => ({ n, c, m })
 
@@ -183,9 +184,79 @@ const DRAW = {
 const lipLum = { t: 0, v: null }
 const ORDER = ['primer', 'foundation', 'concealer', 'blush', 'highlighter', 'eyeshadow', 'eyeliner', 'mascara', 'brows', 'lipstick', 'gloss']
 
-export function drawMakeup(c, M, state, raw) {
+// ---- skin products on the 3D face mask (render/facemesh.js) ----
+// Each one is painted ONCE in face texture space, in centimetres of a real face (cm(i) = where landmark i lies), with the same
+// anatomical references as the 2D versions above. The mesh then wraps the paint onto the live face every frame. Paint is fully
+// opaque in the texture; the product's intensity and blend modes are applied when the mesh is composited (passes).
+const FW = 15.3 // face width in cm, the unit the 2D versions use (fw)
+function uvPainter(x, S) {
+  const kx = S / CM_U, ky = S / CM_V
+  const cm = (i) => { const p = uv(i, S); return { x: p.x / kx, y: p.y / ky } }
+  // soft fill in cm coordinates: the shape is drawn far off the texture and only its blurred shadow lands on it
+  const fill = (shapes, color, blurCm, alpha = 1, rule = 'nonzero', mode = 'source-over') => {
+    x.save(); x.globalCompositeOperation = mode; x.globalAlpha = alpha; x.shadowColor = color; x.shadowBlur = blurCm * kx; x.shadowOffsetX = BIG
+    x.setTransform(kx, 0, 0, ky, -BIG, 0)
+    x.beginPath(); shapes.forEach((sp) => trace(x, sp)); x.fillStyle = '#000'; x.fill(rule); x.restore()
+  }
+  // fades paint out toward the outline of the face mesh, so there is no hard edge where the mask ends
+  const fadeEdge = (widthCm) => {
+    x.save(); x.globalCompositeOperation = 'destination-out'; x.setTransform(kx, 0, 0, ky, 0, 0)
+    x.shadowColor = '#000'; x.shadowBlur = widthCm * kx * 1.2; x.lineJoin = 'round'; x.lineWidth = widthCm * 0.8; x.strokeStyle = '#000'
+    x.beginPath(); trace(x, OVAL.map(cm)); x.stroke(); x.restore()
+  }
+  return { cm, fill, fadeEdge }
+}
+const MESH = {
+  foundation: {
+    paint(x, S, s) {
+      const { cm, fill, fadeEdge } = uvPainter(x, S)
+      fill([OVAL.map(cm), ...EYES.map((e) => e.loop.map(cm)), LIPS_OUT.map(cm)], s.c, FW * 0.03, 1, 'evenodd')
+      fadeEdge(FW * 0.12)
+    },
+    passes: (v) => [['soft-light', v * 0.55], ['source-over', v * 0.1]],
+  },
+  concealer: {
+    paint(x, S, s) {
+      const { cm, fill } = uvPainter(x, S)
+      EYES.forEach((e) => {
+        const a = cm(e.out), b = cm(e.inn), w = d(a, b), m = cm(e.lowMid), rot = Math.atan2(b.y - a.y, b.x - a.x)
+        fill([ell({ x: m.x, y: m.y + w * 0.3 }, w * 0.6, w * 0.2, rot)], s.c, w * 0.22)
+      })
+    },
+    passes: (v) => [['screen', v * 0.5], ['soft-light', v * 0.25]],
+  },
+  blush: {
+    paint(x, S, s) {
+      const { cm, fill } = uvPainter(x, S)
+      // a soft oval swept from the apple of the cheek (50 / 280) up along the cheekbone (116 / 345)
+      ;[[50, 116], [280, 345]].forEach(([a, b]) => {
+        const A = cm(a), B = cm(b), ctr = lerp(A, B, 0.4), len = d(A, B), ang = Math.atan2(B.y - A.y, B.x - A.x)
+        const rx = len * 0.75 + FW * 0.02
+        fill([ell(ctr, rx, rx * 0.5, ang)], s.c, rx * 1.1)
+      })
+    },
+    passes: (v) => [['multiply', v * 0.5], ['soft-light', v * 0.4]],
+  },
+  highlighter: {
+    paint(x, S, s) {
+      const { cm, fill } = uvPainter(x, S)
+      ;[[117, 0.35], [346, -0.35]].forEach(([i, t]) => fill([ell(cm(i), FW * 0.075, FW * 0.028, t)], s.c, FW * 0.025)) // cheekbones, rising toward the temples
+      const a = cm(168), b = cm(6)
+      fill([ell(lerp(a, b, 0.5), FW * 0.014, d(a, b) * 0.7, 0)], s.c, FW * 0.015, 0.86) // bridge of the nose
+      const c0 = cm(0); fill([ell({ x: c0.x, y: c0.y - FW * 0.014 }, FW * 0.03, FW * 0.01, 0)], s.c, FW * 0.012) // cupid's bow
+    },
+    passes: (v) => [['screen', v * 0.7]],
+  },
+}
+export const MESH_IDS = new Set(Object.keys(MESH))
+
+// mesh: the WebGL face mask (or null: everything is drawn with the 2D renderer)
+export function drawMakeup(c, M, state, raw, mesh) {
+  const meshOn = !!mesh && Object.keys(state).some((id) => MESH[id]) && mesh.update(M)
   ORDER.forEach((id) => {
     const st = state[id]; if (!st) return
-    DRAW[id](c, M, MAKEUP.find((p) => p.id === id).shades[st.shade], st.v, raw)
+    const shade = MAKEUP.find((p) => p.id === id).shades[st.shade]
+    if (meshOn && MESH[id] && mesh.draw(c, mesh.texture(`${id}:${st.shade}`, (x, S) => MESH[id].paint(x, S, shade)), MESH[id].passes(st.v))) return
+    DRAW[id](c, M, shade, st.v, raw)
   })
 }

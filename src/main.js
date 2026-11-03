@@ -354,3 +354,6 @@ const openAi = () => {
   aiP.then((ai) => ai.open()).catch(() => { aiP = null; alert('This part of the site could not load. Please check your connection and try again.') })
 }
 document.querySelectorAll('[data-aitryon]').forEach((b) => b.addEventListener('click', openAi))
+
+/* ---------- account (optional sign-in; the site works without it) ---------- */
+import('./account/account.js').then((m) => m.initAccount()).catch(() => {})

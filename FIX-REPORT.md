@@ -1,43 +1,15 @@
-# Update 8: free AI try-on + live tracking speed fixes
-- **Free mode** for "See It On You" (no key, no cost): public IDM-VTON demo on Hugging Face, called from the visitor's browser.
-  Limits: shared queue, small daily quota per visitor, upper-body garments best, **non-commercial licence**. Paid FASHN is used
-  automatically when `FASHN_API_KEY` is set. Details: README section N.
-- Checked options: Gemini image API has no free tier (paid only); the Kolors try-on demo has its API switched off; IDM-VTON's demo
-  exposes a public API. Tested against an exact local copy of its interface (36/36 browser checks, plus the "not reachable" path).
-- **Live tracking:** exact new-frame detection (frame callback), automatic load saving, hand occlusion only for confirmed hands,
-  richer `?debug`. Regression-tested: earrings, lipstick and nails still track in the studio tests.
+# Update 10: AR tracking audit and 3D face mask
+Live studio only (the backend is unchanged). Skin makeup now uses a real 3D face mesh (WebGL) instead of flat shapes;
+category pipelines and loading notes fixed. Audit, measurements and limitations: `TRACKING-AUDIT.md` (Update 10) and
+`TESTING-REPORT.md`.
 
 ---
 
-# Update 7: "See It On You" AI virtual outfit try-on (photo based)
-New separate experience (header button **See It On You** and a button on the last chapter); the live camera mirror is unchanged.
-Model: **FASHN tryon-v1.6** through the site's own Netlify Function (key stays on the server). Setup: README section M.
-
-Tested here (README M "Test it locally"): the real built site + the real function code, with FASHN replaced by a local mock
-(no key and no access to FASHN from this environment), in headless Chromium at 1440x900, 820x1180 and 390x844:
-38/38 checks pass: open, health check, rejects non-images and too-small images, previews, consent gate, clothing type sent,
-real stage + elapsed time while waiting, result shown, before/after drag, download, try another outfit, start over, no sideways
-scrolling, and the honest "not switched on" state without a key. Backend: 15/15 (`tests/functions.test.mjs`).
-**Not tested:** a real FASHN generation (needs your key). Your first real try is the live test.
-
----
-
-# Update 6.1: fixes from your screen recording (2 Nov)
-
-I went through your 2 min 44 s recording frame by frame. What it showed, why, and what changed:
-
-| What the recording showed | Cause | Fix | Checked |
-|---|---|---|---|
-| **The T-shirt photo sat over your head**, with your face showing through an oval hole, and a big white box around it | (1) The garment photo's white background was not removed: the dark strip at the top of the screenshot made the background check fail. (2) Size came from the whole photo, not the garment, so the white margins were stretched over you. (3) Nothing stopped a wrong body reading from putting clothes above the chin. | (1) Edge strips (screenshot bars) are removed first; the background colour is taken from the whole border; two-tone checkerboards work; the cut stops at faint garment outlines; only the largest piece is kept (stray icons dropped). (2) The garment's own shoulder width and top (ignoring a hanger) are measured and matched to your shoulders. (3) A garment is cut off along your jaw line, so it can never cover the face; body readings whose shoulders are not below the chin (or are implausibly wide/narrow for your face) are ignored. | The garment photos you sent cut out (6 shown; the watermarked tee is not included) (`docs/test-results/garments-cutout.jpg`); navy and floral dresses sit on the model's shoulders. White-on-white (white tee on white backdrop) still loses a faint sleeve: use a contrasting background. |
-| **Earrings and the necklace were drawn on top of your hand** when it passed in front of your face | Nothing knew where the hand was unless nails were applied. | On computers, the hand model now also runs (every 2nd frame) when makeup or jewellery is on, and the real hand is drawn back on top of face items and clothes. On phones this happens when nails are on (to save battery). | Test: the hand holding glasses now appears in front of the necklace (`docs/test-results/hand-in-front.jpg`). |
-| **Primer made the face look smeared** | Blur at 1/7 resolution, 85% opacity. | Light smoothing (1/3 resolution, 38% opacity, soft edge). | Visual check. |
-| **Foundation left a line between face and neck** | Hard-ish mask edge, high coverage. | Much wider soft edge; mostly a tone shift, little coverage. | Visual check. |
-| **Blush looked like two red discs** | Round shape, strong multiply, placed low. | Soft oval from the apple of the cheek up along the cheekbone, lower strength. | Visual check (`docs/test-results/makeup-natural.jpg`). |
-| **Eyeliner too thick, long wings; mascara spiky** | Constant thick line; long straight lash strokes. | Tapered liner (thin inside, thicker outside, short flick); mascara darkens the lash line plus fine short curved lashes. | Visual check. |
-| **"Loading hand tracking" darkened the whole camera view**; "show your hand" hint stayed up on other tabs | Loading used the full-screen message; hints were not tab-aware. | Loading shows as a small note; hand/shoulder hints only on the Nails/Outfits tabs. | Visual check. |
-
-What looked GOOD in your recording and was not changed: earrings staying on the ears while you moved, nails on the back of the hand
-(including the French manicure), lipstick, hair colour.
+# Update 9: backend
+New full-stack backend (`backend/`, docs in `docs/BACKEND.md` and `docs/API.md`, setup in README section O). This version also
+contains all fixes from Updates 6.1 to 8 (garment cut-out and fitting, clothes never above the jaw, hand in front of face
+items, natural primer/foundation/blush/eyeliner/mascara, smaller loading notes, exact camera-frame detection, automatic load
+saving, free AI try-on, See It On You page). Test results: `TESTING-REPORT.md`.
 
 ---
 

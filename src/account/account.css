@@ -1,0 +1,38 @@
+/* Account dialog: same ink, gold and ivory as the rest of Glamify */
+.ac{position:fixed;inset:0;z-index:340;display:grid;place-items:center;padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));background:rgba(6,8,12,.72);backdrop-filter:blur(6px);overflow-y:auto;font-family:Figtree,system-ui,sans-serif;color:#F7F1E8}
+.ac[hidden]{display:none}
+body.ac-open{overflow:hidden}
+.ac *{box-sizing:border-box}
+.ac-box{width:min(440px,100%);display:grid;gap:14px;border-radius:24px;padding:22px;background:radial-gradient(500px 260px at 100% 0,rgba(226,190,124,.16),transparent 60%),#0B0E14;border:1px solid rgba(226,190,124,.45);box-shadow:0 30px 90px rgba(0,0,0,.6)}
+.ac-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.ac-k{font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:#E2BE7C}
+.ac-head h2{margin:4px 0 0;font-family:Italiana,Georgia,serif;font-weight:400;font-size:32px;line-height:1.05}
+.ac-x{flex:none;width:40px;height:40px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:none;color:#fff;font-size:22px;cursor:pointer;line-height:1}
+.ac-x:hover{border-color:#E2BE7C;color:#E2BE7C}
+.ac-card{display:grid;gap:12px}
+.ac-f{display:grid;gap:6px;font-size:13px;color:#D3CABD}
+.ac-f small{color:#9d958a}
+.ac-f input{min-height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.22);background:#11151d;color:#F7F1E8;font:inherit;font-size:16px;padding:0 14px}
+.ac-f input:focus{outline:none;border-color:#E2BE7C;box-shadow:0 0 0 3px rgba(226,190,124,.2)}
+.ac-row{display:flex;justify-content:space-between;gap:12px;margin:0;font-size:14px;color:#D3CABD;border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:8px}
+.ac-row b{color:#F7F1E8;font-weight:500;overflow-wrap:anywhere;text-align:right}
+.ac button{font:inherit}
+.ac-btns{display:flex;flex-wrap:wrap;gap:8px}
+.ac-btns button,.ac-primary,.ac-del{min-height:44px;padding:10px 20px;border-radius:999px;border:1px solid rgba(226,190,124,.6);background:transparent;color:#F7F1E8;cursor:pointer;font-size:14px}
+.ac-btns button:hover{background:#E2BE7C;color:#0B0E14}
+.ac-primary{background:linear-gradient(110deg,#C9A15A,#F3D9A4 45%,#E2BE7C 55%,#B88A43)!important;color:#0B0E14!important;border:0!important;font-weight:600;font-size:15px!important}
+form .ac-primary{width:100%;min-height:50px}
+.ac button:disabled{opacity:.5;cursor:not-allowed}
+.ac-switch{margin:0;text-align:center;font-size:14px;color:#D3CABD}
+.ac-switch button{background:none;border:0;color:#E2BE7C;text-decoration:underline;cursor:pointer;padding:4px}
+.ac-fine{margin:0;font-size:12px;line-height:1.55;color:#9d958a}
+.ac-msg{margin:0;border-radius:12px;padding:10px 14px;font-size:14px;line-height:1.5;background:rgba(127,200,150,.1);border:1px solid rgba(127,200,150,.4)}
+.ac-msg.err{background:rgba(194,26,75,.14);border-color:rgba(232,90,120,.6)}
+.ac-danger{border-top:1px solid rgba(255,255,255,.1);padding-top:10px;font-size:14px;color:#D3CABD}
+.ac-danger summary{cursor:pointer;color:#e88a9f}
+.ac-danger p{font-size:13px;line-height:1.5}
+.ac-danger .ac-f{margin-bottom:10px}
+.ac-del{border-color:rgba(232,90,120,.7)!important;color:#ffb3c2!important}
+.ac-del:hover{background:rgba(194,26,75,.3)!important}
+.ac :focus-visible{outline:2px solid #E2BE7C;outline-offset:3px}
+.ac-row span{white-space:nowrap}

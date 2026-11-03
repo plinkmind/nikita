@@ -3,6 +3,14 @@
 Facts below come from the sources listed at the end. I did **not** run these models myself, so I make no claim about their relative
 output quality. Prices change; check the provider's pricing page before you rely on a number.
 
+## Update 9 (current)
+The backend (`backend/src/providers/`) supports, chosen automatically:
+- **Free mode: IDM-VTON** (yisol/IDM-VTON on Hugging Face). Free, runs in the visitor's browser (each visitor uses their own
+  free GPU allowance; a Netlify Function could not wait minutes in Hugging Face's queue). Non-commercial licence (CC BY-NC-SA 4.0).
+- **FASHN tryon-v1.6**: paid, commercial, server-side. Used automatically when `FASHN_API_KEY` is set.
+- **FLUX.1 Kontext [pro] on Replicate** for hairstyles: paid. No free hairstyle model was found.
+The older Google Vertex path (separate `server/`) was removed with the old server; it needed a paid Google Cloud project and was never set up.
+
 ## Outfit try-on
 
 | Option | Licence / availability | Cost and speed (as reported) | Verdict for a business site |
@@ -18,8 +26,6 @@ output quality. Prices change; check the provider's pricing page before you rely
 **Decision:** the server supports two providers, chosen with `TRYON_PROVIDER`: `fashn` (recommended: dedicated try-on model, seconds instead of about a minute) or `google` (Vertex AI Virtual Try-On; retires 20 Jan 2027, model name is a setting). Neither has been run live from here (no keys); both are tested against mocks of their documented APIs.
 
 ## Hairstyle transformation
-**Update 6.2 (Netlify Function):** hairstyles use **FLUX.1 Kontext [pro]** (Black Forest Labs, text-instructed image editing) through Replicate's asynchronous API, chosen because it needs no Google Cloud project and fits a serverless function (start job, poll status). About $0.04 per image on Replicate. It is a general image editor: it usually keeps the face, but there is no identity guarantee. The Google Gemini path remains in `server/` for a separate server.
-
 Update 6: the style list now follows the reference sheets you sent (15 styles), and the instruction asks the model to keep the face, identity, earrings, clothing, background and light, with a natural hairline. Your before/after example (curly) is the quality target.
 
 I found no dedicated, commercially licensed hairstyle-transfer API that I could verify. Hairstyle research models exist, but I did not verify their licences, so I did not use them.
