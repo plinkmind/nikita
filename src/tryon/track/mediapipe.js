@@ -17,6 +17,9 @@ export const MODEL_PATHS = {
   poseFull: 'pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
   hand: 'hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
   // both segmenters label hair as category 1. Multiclass also labels face skin (3), body skin (2) and clothes (4).
+  // Default (Update 13): the dedicated Hair Segmenter - 512x512 input (twice the detail of the multiclass model's 256x256), 0.8 MB
+  // instead of about 16 MB to download. Face, ears and neck are separated from hair with the face tracker instead.
+  // VITE_HAIR_MODEL=multi switches back to the multiclass model (its body-skin class also finds a hand over the face on phones).
   segMulti: 'image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite',
   segHair: 'image_segmenter/hair_segmenter/float32/latest/hair_segmenter.tflite',
 }
@@ -53,4 +56,4 @@ export const createHandTracker = () => make('HandLandmarker', {
 
 export const createSegmenter = () => make('ImageSegmenter', {
   runningMode: 'VIDEO', outputCategoryMask: true, outputConfidenceMasks: false,
-}, import.meta.env.VITE_HAIR_MODEL === 'hair' ? MODEL_PATHS.segHair : MODEL_PATHS.segMulti)
+}, import.meta.env.VITE_HAIR_MODEL === 'multi' ? MODEL_PATHS.segMulti : MODEL_PATHS.segHair)

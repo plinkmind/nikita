@@ -1,3 +1,10 @@
+# Update 13: hair segmentation and hair colour (Step 3)
+Hair Segmenter model (sharper, 20x smaller download), only head-connected hair, mask moved with head turns, eyes/brows/lips and
+forehead protected, segmenter reads the drawn frame, GPU recolouring that keeps the real strands and shine. Hairstyles stay
+AI-generated (no fake live overlay). Details: `TRACKING-AUDIT.md` Update 13.
+
+---
+
 # Update 12: face tracking and 3D face mesh (Step 2)
 Missed-frame prediction, jump guard against wrong detections, faster-reacting smoothing, named face anchors
 (ears, eyes, brows, nose, lips, cheeks, jaw...) shown in `?debug`. Measurements: `TRACKING-AUDIT.md` Update 12.

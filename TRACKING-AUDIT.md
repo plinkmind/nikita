@@ -1,6 +1,65 @@
 # Tracking audit
 
-## Update 12 (latest): Step 2 - face tracking and 3D face mesh
+## Update 13 (latest): Step 3 - hair segmentation and hair colour
+Changed: `src/tryon/hair.js`, new `src/tryon/render/haircolor.js`, `src/tryon/render/masks.js` (head-connected hair only),
+`src/tryon/track/mediapipe.js` (hair model), `src/tryon/studio.js` (hair wiring only). Face tracking, makeup, nails, jewellery
+and outfits unchanged (makeup's hair occlusion uses the same mask, so it now uses the hair model too).
+
+**A. Hair colour try-on (live).** Pipeline per camera frame:
+1. **Model: MediaPipe Hair Segmenter** (deep-learning, 512x512 input, 0.8 MB) instead of the selfie multiclass model
+   (256x256, ~16 MB). Twice the input detail for hair and 20x less to download on a phone. Face, ears and neck are separated
+   with the face tracker instead of the multiclass skin classes (`VITE_HAIR_MODEL=multi` switches back).
+2. **Pixel mask:** labels -> soft mask -> guided filter against the camera picture (edges follow real strands) -> smoothing over
+   time with the previous mask moved with the head (Update 11).
+3. **Only hair attached to the head:** pieces of "hair" that do not touch an ellipse around the face are removed (trees, dark
+   clothes, shadows the model mistakes for hair). Long hair is kept as long as it is connected.
+4. **Follows the head:** the mask is moved to the current frame with the head's position, size AND rotation since the
+   segmenter last ran (from the eye corners), because on phones the segmenter does not run on every frame.
+5. **Same frame:** the segmenter now reads the exact picture that is drawn (not the live video, which may already show a newer
+   frame) - in the live test this removed a pale patch on the forehead while moving.
+6. **Protected:** eyes, eyebrows and lips never get hair colour; inside the face outline the mask must be more certain
+   (fringe yes, forehead no) and bright skin-coloured pixels are left alone.
+7. **Recolour on the GPU** (WebGL shader): new brightness = shade brightness + the pixel's own difference from the average hair
+   brightness (limited contrast gain, soft roll-off near white and black), shade colour + 10% of the pixel's own colour
+   variation, shine (bright, unsaturated) kept. 2D fallback without WebGL.
+
+Outdoor photo (light hair, busy background): face-skin colour 0.05 (Update 11) -> 0.00, halo 6.0 -> 3.9, flicker 0.123 -> 0.042.
+
+Measured on two real photos (studio portrait with short dark hair; outdoor photo, light hair, busy dark background), real
+Hair Segmenter + Face Landmarker, 6 shades (`tests/run.mjs "test=hairc"`). "Before" = binary mask + 2D tint (before
+Update 11), "Update 11" = refined mask + 2D tint (what was live until now), "new" = this pipeline.
+
+| Measure (portrait, average of 6 shades) | Before | Update 11 | New |
+|---|---|---|---|
+| Colour on face skin below the brows (lower = better) | 0.14 | 0.45 | **0.12** |
+| Halo on the white background next to the hair | 0* | 1.35 | **0.31** |
+| Strand texture kept (1 = all) | 0.998 | 0.991 | 0.972 |
+| Hue error vs the shade | 1.2 deg | 1.3 deg | 2.0 deg |
+| Lightness reached, platinum on dark hair (target L 88) | 66.6 | 66.2 | **71.1** |
+| Mask flicker on a still, noisy picture | 0.030 | - | **0.008** (refined) |
+| Mask match while moving, segmenter every 3rd frame (IoU): not moved / moved / moved + turned + scaled | | 0.40 / 0.69 | **0.72** |
+
+\* "Before" cannot show a halo in this measure: the background ring is defined from its own hard mask.
+
+Texture numbers measure correlation of fine detail; the old 2D tint keeps it numerically because it paints a nearly uniform
+colour over the hair while keeping the original pixel variation, which is exactly what looked flat and "painted". The new
+shader rebuilds brightness and shine from the real hair, which is what makes it look like hair (compare
+`docs/test-results/hair-colour-pipeline.jpg`). Under dim, warm and cool light the result stays within about 0-8 deg of the
+shade's hue on the portrait (up to ~20 deg on the outdoor photo with warm light).
+
+**B. Hairstyle try-on (AI).** Not live, by design: a 2D overlay cannot replace a hairstyle realistically, and the studio does
+not pretend to. Hairstyles are generated from a photo in the AI Photo tab by an image-editing model on the backend (FLUX Kontext
+on Replicate, paid, `REPLICATE_API_TOKEN`). Free alternative checked: HairFastGAN (AIRI research demo on Hugging Face, takes a
+face photo plus a photo of the hairstyle to copy). It runs today, but has no stable API (no endpoint names, the work runs on the
+lab's own server) and could not be tested from here, so it was not wired in.
+
+Remaining limits: hair-coloured background touching the hair (dark trees next to dark hair) can still be coloured; very thin
+flyaway strands are partly lost at the mask edge; dyeing very dark hair to platinum reaches L 71 of 88 (real dye has the same
+problem, but the try-on cannot show bleach); no phone or real-camera test.
+
+---
+
+## Update 12: Step 2 - face tracking and 3D face mesh
 Only the face tracker and face mesh changed (`src/tryon/track/head.js`, new `track/normals.js`, `render/facemesh.js` uses the
 shared normals, debug view in `studio.js`). Hair, nails, makeup and outfit code were not touched.
 

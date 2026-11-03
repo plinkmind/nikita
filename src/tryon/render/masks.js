@@ -52,7 +52,9 @@ export function createMasks(phone) {
   }
   // labels: Uint8Array (mw x mh) from the segmenter, analysed on the UN-mirrored camera frame. raw: the mirrored camera picture.
   // motion: how far the head moved since the previous mask, { dx, dy } in picture pixels and rel = that distance / face width
-  function update(labels, mw, mh, raw, mirror, motion = null) {
+  // keep: { x, y, rx, ry } ellipse around the face (picture pixels): hair pieces that do not reach it are dropped (trees, dark
+  // clothes or a shadow the model mistakes for hair). Hair can be long: a piece only has to TOUCH the ellipse.
+  function update(labels, mw, mh, raw, mirror, motion = null, keep = null) {
     if (!B || Math.max(64, Math.round(raw.width * (phone ? 1 / 4 : 1 / 2))) !== w) alloc(raw.width, raw.height)
     const n = w * h
     // 1. labels -> soft masks at working size: each working pixel = the share of hair (and of occluder classes) in its block
@@ -85,9 +87,37 @@ export function createMasks(phone) {
       cv.getContext('2d').putImageData(img, 0, 0)
       return res
     }
+    if (keep) dropFar(hp, keep, raw.width, raw.height)
     prevHair = out(hp, prevHair, hairCv)
     if (occAny || prevOcc) prevOcc = out(op, prevOcc, occCv); else occCv.getContext('2d').clearRect(0, 0, w, h)
     seen++
+  }
+  // connected pieces of the mask (above 0.3) that do not touch the face ellipse are removed
+  function dropFar(m, kp, W0, H0) {
+    const n = w * h, lab = B.lab || (B.lab = new Int32Array(n)), keepId = B.keepId || (B.keepId = new Uint8Array(n + 1)); lab.fill(0)
+    const ex = (kp.x * w) / W0, ey = (kp.y * h) / H0, erx = (kp.rx * w) / W0, ery = (kp.ry * h) / H0
+    let id = 0; const st = B.stack || (B.stack = new Int32Array(n))
+    for (let s0 = 0; s0 < n; s0++) {
+      if (lab[s0] || m[s0] < 0.3) continue
+      id++; let sp = 0, touch = false; st[sp++] = s0; lab[s0] = id
+      while (sp) {
+        const o = st[--sp], x = o % w, y = (o / w) | 0
+        if (!touch) { const dx = (x - ex) / erx, dy = (y - ey) / ery; if (dx * dx + dy * dy <= 1) touch = true }
+        if (x > 0 && !lab[o - 1] && m[o - 1] >= 0.3) { lab[o - 1] = id; st[sp++] = o - 1 }
+        if (x < w - 1 && !lab[o + 1] && m[o + 1] >= 0.3) { lab[o + 1] = id; st[sp++] = o + 1 }
+        if (y > 0 && !lab[o - w] && m[o - w] >= 0.3) { lab[o - w] = id; st[sp++] = o - w }
+        if (y < h - 1 && !lab[o + w] && m[o + w] >= 0.3) { lab[o + w] = id; st[sp++] = o + w }
+      }
+      if (id < keepId.length) keepId[id] = touch ? 1 : 0
+    }
+    if (!id) return
+    // the faint edge (below 0.3) around a dropped piece goes too: grow the dropped pieces 3 pixels into it
+    for (let pass = 0; pass < 3; pass++) for (let i = 0; i < n; i++) {
+      if (lab[i] || m[i] <= 0) continue; const x = i % w
+      const nb = (x > 0 ? lab[i - 1] : 0) || (x < w - 1 ? lab[i + 1] : 0) || (i >= w ? lab[i - w] : 0) || (i + w < n ? lab[i + w] : 0)
+      if (nb && !keepId[nb]) lab[i] = nb
+    }
+    for (let i = 0; i < n; i++) { const l = lab[i]; if (l && !keepId[l]) m[i] = 0 }
   }
   function reset() { prevHair = prevOcc = null; seen = 0 }
   return { update, reset, get hair() { return seen ? hairCv : null }, get occluder() { return seen ? occCv : null }, get size() { return [w, h] } }

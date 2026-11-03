@@ -1,7 +1,8 @@
 // "AI Photo" tab of the live studio. This makes a GENERATED image with an AI model (not a live overlay).
 //  - Outfits: handled by the separate "See It On You" page (free or paid AI, with history), opened from here.
 //  - Hairstyles: sent to the Glamify backend (POST /api/tryon/generate with type=hair), which uses FLUX Kontext on Replicate
-//    when the site owner has set REPLICATE_API_TOKEN. There is no free hairstyle AI; without the key this tab says so.
+//    when the site owner has set REPLICATE_API_TOKEN. There is no free hairstyle AI service to rely on (HairFastGAN is a research
+//    demo without a stable API, see TRACKING-AUDIT.md Update 13); without the key this tab says so.
 // Photos are only sent after the person ticks the consent box and presses the button.
 import { api } from '../api/client.js'
 
@@ -43,7 +44,7 @@ export function initPhoto(box, hooks = {}) {
     let head = ''
     if (S.health === 'checking' || S.health === null) head = '<p class="ts-note">Checking the AI service...</p>'
     else if (S.health === 'offline') head = '<p class="ts-warn"><b>The Glamify server cannot be reached.</b> Check your connection. The live camera try-on still works.</p><button class="chip" data-ph="recheck">Check again</button>'
-    else if (!S.hairReady) head = '<p class="ts-warn"><b>AI hairstyles are not switched on for this website.</b> They need a paid image-editing service (there is no free one); the site owner can switch it on (README, section O). Live <b>hair colour</b> in the Hair tab works without it.</p>'
+    else if (!S.hairReady) head = '<p class="ts-warn"><b>AI hairstyles are not switched on for this website.</b> They need a paid image-editing AI service (free research demos exist but have no stable service to build on); the site owner can switch it on (README, section O). Live <b>hair colour</b> in the Hair tab works without it.</p>'
     box.innerHTML = intro + tabs + `<div class="ts-grp">${head}</div>
       <div class="ts-opt"><span>1. Your photo (clear face and hair, facing the camera)</span>
         <label class="ts-up">${S.person ? 'Change photo' : 'Choose your photo'}<input type="file" accept="image/png,image/jpeg,image/webp" data-ph-file="person"${busy ? ' disabled' : ''}></label>${S.person ? `<img class="ph-prev" src="${S.person.url}" alt="Your photo">` : ''}</div>

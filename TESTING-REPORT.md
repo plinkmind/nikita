@@ -1,5 +1,19 @@
 # Testing report
 
+## Update 13: hair segmentation and hair colour
+
+| Test | Result |
+|---|---|
+| `tests/run.mjs "test=hairc"` on a studio portrait and an outdoor photo, 6 shades, real Hair Segmenter + Face Landmarker | skin spill 0.45 -> 0.12, halo 1.35 -> 0.31, flicker 0.030 -> 0.008, moving-mask match 0.69 -> 0.72; texture and shine rebuilt from the real hair (see `TRACKING-AUDIT.md` Update 13) |
+| Dim / warm / cool light | hue within 0-8 deg of the shade on the portrait, up to ~20 deg on the outdoor photo under warm light |
+| Full studio, moving portrait video, hair colour | GPU path active every frame, no console errors from the site; a pale forehead patch found while moving (mask from a newer video frame) - fixed and re-checked |
+| Backend suite | 55/55 |
+
+**Not tested:** phones (GPU shader and Hair Segmenter speed), long or curly hair (no free test photos with them were available here),
+real people.
+
+---
+
 ## Update 12: face tracking and 3D face mesh
 
 | Test | Result |

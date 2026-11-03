@@ -17,3 +17,7 @@ necklace (top) and 3D hoops (bottom) on the scanned test head at front, turn 34 
 Update 12: `face-anchors-debug.jpg` - the full studio with `?debug` on the scanned test head (nod down, look up, tilt, close,
 far, turn): yellow = named face anchors (eyes, brows, nose, lips, cheeks, jaw, chin, forehead), pink = ears, nostrils and neck
 (faded when turned away), green dots = tracked face points, numbers at the bottom = the PHONE REPORT.
+
+Update 13: `hair-colour-pipeline.jpg` - six shades on two real photos; in each block the columns are: before (binary mask +
+flat tint), Update 11 (refined mask + flat tint), new (Hair Segmenter + protected mask + GPU recolouring with the real strands
+and shine). `hair-colour-live.jpg` - the full live studio (fake camera, moving portrait), ash grey.

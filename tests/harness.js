@@ -153,7 +153,7 @@ async function seg() {
     if (i === 2) { cv.width = W; cv.height = H; cx.drawImage(f, 0, 0); const id = cx.getImageData(0, 0, W, H); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const v = a[Math.floor(y * m.height / H) * m.width + Math.floor(x * m.width / W)]; if (v === 1) { const k = (y * W + x) * 4; id.data[k] = 255; id.data[k + 1] *= 0.4 } } cx.putImageData(id, 0, 0) } })
   window.__result = info; log(JSON.stringify(info))
 }
-;({ anchors, motion, nails, seg, occl })[test]().catch((e) => { window.__result = { error: String(e && e.stack || e) }; log('ERROR', e && e.stack || e) })
+;({ anchors, motion, nails, seg, occl, hairc })[test]().catch((e) => { window.__result = { error: String(e && e.stack || e) }; log('ERROR', e && e.stack || e) })
 
 // Hair mask refinement + makeup occlusion on a real portrait: raw segmenter labels vs guided-filter mask, and makeup drawn
 // without / with the occlusion cut. Tiles: [raw mask] [refined mask] [makeup, no cut] [makeup, cut].
@@ -180,4 +180,128 @@ async function occl() {
   put(mk(false), 2); put(mk(true), 3)
   const hairPx = labels.reduce((n, v) => n + (v === 1), 0)
   window.__result = { mw, mh, hairPx, refineMs: +ms.toFixed(1), work: masks.size, refineMsPhoneSize: +msP.toFixed(1), workPhone: masksP.size }
+}
+
+// ---------- hair colour pipeline: before (binary mask + 2D tint), Update 11 (refined mask + 2D tint), new (protected mask + GPU) ----------
+// Real photos, real Hair Segmenter + Face Landmarker. Measures, per shade:
+//   skin spill  - average colour change on face skin below the eyebrows (should be ~0)
+//   bg spill    - average colour change on bright background pixels near the hair (halo)
+//   texture     - correlation of fine brightness detail (strands) in the hair before vs after (1 = all texture kept)
+//   hue error   - angle between the result's mean hair colour and the shade, in the a/b colour plane (degrees)
+// plus mask alignment while the head moves with the segmenter running on every 3rd frame (IoU vs a fresh mask), flicker on a
+// still noisy picture, and hue error under dim and warm light.
+import { createHairRenderer, HAIR } from '../src/tryon/hair.js'
+import { tintRegion, meanLum } from '../src/tryon/render/tint.js'
+async function hairc() {
+  const which = q.get('img') || 'portrait.png', W = 960, H = 720
+  let img = await load('./img/' + which)
+  if (q.get('crop')) { const [x, y, s] = q.get('crop').split(',').map(Number), c = document.createElement('canvas'); c.width = c.height = s; c.getContext('2d').drawImage(img, x, y, s, s, 0, 0, s, s); img = c }
+  const det = await createFaceTracker(), seg = await createSegmenter()
+  const shades = HAIR[0].shades.filter((s) => ['Black', 'Honey blonde', 'Platinum', 'Burgundy', 'Rose pink', 'Copper'].includes(s.n))
+  let clock = 1; const KEEP_OFF = q.get('keep') === '0'
+  const analyse = (f, _t, head, masks, motion) => {
+    const t = (clock += 34)
+    const lm = det.detectForVideo(f, t).faceLandmarks[0] || null, M = head.update(lm, W, H, false, t); let labels, mw, mh
+    seg.segmentForVideo(f, t, (r) => { const m = r.categoryMask; labels = m.getAsUint8Array().slice(); mw = m.width; mh = m.height })
+    if (masks) masks.update(labels, mw, mh, f, false, motion, M && KEEP_OFF !== true ? { x: M.P[1].x, y: M.P[1].y - M.fh * 0.1, rx: M.fw3 * 0.65, ry: M.fh * 0.8 } : null)
+    return { lm, M, labels, mw, mh }
+  }
+  const binMask = (labels, mw, mh) => { const c = document.createElement('canvas'); c.width = mw; c.height = mh; const x = c.getContext('2d'), d = x.createImageData(mw, mh); labels.forEach((v, i) => { d.data[i * 4 + 3] = v === 1 ? 255 : 0 }); x.putImageData(d, 0, 0); return c }
+  const px = (c) => c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data
+  const lab = (r, g, b) => { const f = (v) => { v /= 255; return v > 0.04045 ? ((v + 0.055) / 1.055) ** 2.4 : v / 12.92 }; const R = f(r), G = f(g), B = f(b); const X = 0.4124 * R + 0.3576 * G + 0.1805 * B, Y = 0.2126 * R + 0.7152 * G + 0.0722 * B, Z = 0.0193 * R + 0.1192 * G + 0.9505 * B; const g3 = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116); const fx = g3(X / 0.9505), fy = g3(Y), fz = g3(Z / 1.089); return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)] }
+  // ---- 1. still frame: quality per shade ----
+  const head0 = new HeadTracker(), masks0 = createMasks(false)
+  const f0 = frame(img, W, H, { tx: 0, ty: 0, r: 0, s: 1 }, 2); let A
+  for (let i = 0; i < 6; i++) A = analyse(f0, i * 33 + 1, head0, masks0, null)
+  const M = A.M, base = px(f0), bin = binMask(A.labels, A.mw, A.mh), binD = bin.getContext('2d').getImageData(0, 0, A.mw, A.mh).data
+  // regions
+  const reg = document.createElement('canvas'); reg.width = W; reg.height = H; const rx = reg.getContext('2d', { willReadFrequently: true })
+  const poly = (ids) => { rx.beginPath(); ids.forEach((i, k) => (k ? rx.lineTo(M.P[i].x, M.P[i].y) : rx.moveTo(M.P[i].x, M.P[i].y))); rx.closePath() }
+  const browY = Math.max(M.P[105].y, M.P[334].y) + M.fw * 0.03
+  rx.fillStyle = '#f00'; poly(FACE_OVAL); rx.fill(); rx.clearRect(0, 0, W, browY)
+  rx.globalCompositeOperation = 'destination-out'; [[33, 133, 145, 159], [263, 362, 374, 386], [61, 0, 291, 17]].forEach((ids) => { rx.beginPath(); rx.arc(ids.reduce((s, i) => s + M.P[i].x, 0) / 4, ids.reduce((s, i) => s + M.P[i].y, 0) / 4, M.fw * 0.12, 0, 7); rx.fill() })
+  const skinR = rx.getImageData(0, 0, W, H).data
+  const isHair = (x, y) => binD[(Math.floor(y * A.mh / H) * A.mw + Math.floor(x * A.mw / W)) * 4 + 3] > 0
+  const core = new Uint8Array(W * H), near = new Uint8Array(W * H)
+  for (let y = 6; y < H - 6; y++) for (let x = 6; x < W - 6; x++) {
+    const i = y * W + x, hHere = isHair(x, y)
+    if (hHere && isHair(x - 5, y) && isHair(x + 5, y) && isHair(x, y - 5) && isHair(x, y + 5)) core[i] = 1
+    if (!hHere) { let nh = false; for (const [dx, dy] of [[-12, 0], [12, 0], [0, -12], [0, 12], [-8, -8], [8, -8]]) if (isHair(x + dx, y + dy)) nh = true; const o = i * 4; if (nh && base[o] > 200 && base[o + 1] > 200 && base[o + 2] > 200) near[i] = 1 }
+  }
+  const blurL = (d) => { const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); const id = x.createImageData(W, H); id.data.set(d); x.putImageData(id, 0, 0); const b = document.createElement('canvas'); b.width = W; b.height = H; const bx = b.getContext('2d', { willReadFrequently: true }); bx.filter = 'blur(2px)'; bx.drawImage(c, 0, 0); return bx.getImageData(0, 0, W, H).data }
+  const baseBlur = blurL(base)
+  const score = (out, col) => {
+    const ob = blurL(out); let ss = 0, sn = 0, bs = 0, bn = 0, sxy = 0, sxx = 0, syy = 0, L = [0, 0, 0], ln = 0
+    for (let i = 0; i < W * H; i++) {
+      const o = i * 4, dd = (Math.abs(out[o] - base[o]) + Math.abs(out[o + 1] - base[o + 1]) + Math.abs(out[o + 2] - base[o + 2])) / 3
+      if (skinR[o + 3]) { ss += dd; sn++ }
+      if (near[i]) { bs += dd; bn++ }
+      if (core[i]) { const yb = 0.299 * (base[o] - baseBlur[o]) + 0.587 * (base[o + 1] - baseBlur[o + 1]) + 0.114 * (base[o + 2] - baseBlur[o + 2]), yo = 0.299 * (out[o] - ob[o]) + 0.587 * (out[o + 1] - ob[o + 1]) + 0.114 * (out[o + 2] - ob[o + 2]); sxy += yb * yo; sxx += yb * yb; syy += yo * yo; const l = lab(out[o], out[o + 1], out[o + 2]); L[0] += l[0]; L[1] += l[1]; L[2] += l[2]; ln++ }
+    }
+    const t = lab(...[1, 3, 5].map((k) => parseInt(col.slice(k, k + 2), 16))), m = L.map((v) => v / ln)
+    const hueErr = Math.hypot(t[1], t[2]) < 8 ? null : Math.abs(((Math.atan2(m[2], m[1]) - Math.atan2(t[2], t[1])) * 57.3 + 540) % 360 - 180)
+    return { skinSpill: +(ss / sn).toFixed(2), bgSpill: +(bs / (bn || 1)).toFixed(2), texture: +(sxy / Math.sqrt(sxx * syy || 1)).toFixed(3), hueErr: hueErr == null ? null : +hueErr.toFixed(1), meanL: +m[0].toFixed(1), targetL: +t[0].toFixed(1) }
+  }
+  const before = (c, col, v) => { const lum = meanLum(f0, bin); tintRegion(c, bin, col, v, lum, W, H, { minScale: 0.3, lighten: 0.75, richness: 0.25 }) }
+  const upd11 = (c, col, v) => { const lum = meanLum(f0, masks0.hair); tintRegion(c, masks0.hair, col, v, lum, W, H, { minScale: 0.3, lighten: 0.75, richness: 0.25 }) }
+  const hr = createHairRenderer()
+  const render = (kind, sh, src = f0, Mx = M, maskCv = masks0.hair) => { const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); x.drawImage(src, 0, 0); const st = { haircolor: { shade: HAIR[0].shades.indexOf(sh), v: 0.85 } }; if (kind === 'before') before(x, sh.c, 0.85); else if (kind === 'update11') upd11(x, sh.c, 0.85); else { hr.reset(); hr.draw(x, maskCv, st, W, H, src, Mx, null) } return c }
+  const res = { img: which, quality: {} }
+  cv.width = 3 * 300; cv.height = shades.length * 300
+  const cropC = (c, k, r) => { const s = M.fw * 2.2; cx.drawImage(c, M.P[1].x - s / 2, M.P[1].y - s * 0.62, s, s, k * 300, r * 300, 300, 300) }
+  shades.forEach((sh, r) => {
+    res.quality[sh.n] = {}
+    ;['before', 'update11', 'new'].forEach((kind, k) => {
+      const c = render(kind, sh)
+      res.quality[sh.n][kind] = score(px(c), sh.c); cropC(c, k, r)
+    })
+  })
+  // ---- 2. movement: segmenter every 3rd frame; how well the (moved) mask matches a fresh one ----
+  const N = 36, seq = Array.from({ length: N }, (_, i) => { const u = i / N; return { tx: 70 * Math.sin(u * 2 * Math.PI), ty: 20 * Math.sin(u * 4 * Math.PI), r: 0.2 * Math.sin(u * 2 * Math.PI + 1), s: 1 + 0.12 * Math.sin(u * 2 * Math.PI + 2) } })
+  const headM = new HeadTracker(), masksM = createMasks(false), masksF = createMasks(false), hrm = createHairRenderer()
+  let segEyes = null, segNose = null; const iou = { none: [], move: [], moveTurn: [] }
+  const eyesOf = (lm) => [{ x: lm[33].x * W, y: lm[33].y * H }, { x: lm[263].x * W, y: lm[263].y * H }]
+  const simT = (from, to) => { const [A1, B1] = from, [A2, B2] = to, vx = B1.x - A1.x, vy = B1.y - A1.y, ux = B2.x - A2.x, uy = B2.y - A2.y; const k = Math.hypot(ux, uy) / Math.hypot(vx, vy), rr = Math.atan2(uy, ux) - Math.atan2(vy, vx), a = k * Math.cos(rr), b = k * Math.sin(rr); return { a, b, c: -b, d: a, e: A2.x - (a * A1.x - b * A1.y), f: A2.y - (b * A1.x + a * A1.y) } }
+  const maskAt = (maskCv, T) => { const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); if (T) x.setTransform(T.a, T.b, T.c, T.d, T.e, T.f); x.drawImage(maskCv, 0, 0, W, H); return x.getImageData(0, 0, W, H).data }
+  for (let i = 0; i < N; i++) {
+    const f = frame(img, W, H, seq[i], 2), t = (clock += 34)
+    const lm = det.detectForVideo(f, t).faceLandmarks[0]; if (!lm) continue
+    const eyes = eyesOf(lm), nose = { x: lm[168].x * W, y: lm[168].y * H }
+    let labels, mw, mh; seg.segmentForVideo(f, t, (r) => { const m = r.categoryMask; labels = m.getAsUint8Array().slice(); mw = m.width; mh = m.height })
+    if (i % 3 === 0) { masksM.update(labels, mw, mh, f, false, null); segEyes = eyes; segNose = nose; continue }
+    masksF.reset(); masksF.update(labels, mw, mh, f, false, null)
+    const fresh = maskAt(masksF.hair, null)
+    for (const [k, T] of [['none', null], ['move', { a: 1, b: 0, c: 0, d: 1, e: nose.x - segNose.x, f: nose.y - segNose.y }], ['moveTurn', simT(segEyes, eyes)]]) {
+      const d = maskAt(masksM.hair, T); let inter = 0, uni = 0
+      for (let p = 3; p < d.length; p += 16) { const a1 = d[p] > 127, b1 = fresh[p] > 127; if (a1 && b1) inter++; if (a1 || b1) uni++ }
+      iou[k].push(inter / (uni || 1))
+    }
+  }
+  const avg = (a) => +(a.reduce((s, v) => s + v, 0) / a.length).toFixed(3)
+  res.movementIoU = { none: avg(iou.none), positionOnly: avg(iou.move), positionSizeRotation: avg(iou.moveTurn) }
+  // ---- 3. flicker on a still, noisy picture: average frame-to-frame change of the mask at the hair edge ----
+  const masksS = createMasks(false); let prevB = null, prevN = null; const flick = { binary: [], refined: [] }
+  for (let i = 0; i < 12; i++) {
+    const f = frame(img, W, H, { tx: 0, ty: 0, r: 0, s: 1 }, 3), t = (clock += 34); let labels, mw, mh
+    seg.segmentForVideo(f, t, (r) => { const m = r.categoryMask; labels = m.getAsUint8Array().slice(); mw = m.width; mh = m.height })
+    masksS.update(labels, mw, mh, f, false, { dx: 0, dy: 0, rel: 0 })
+    const b = maskAt(binMask(labels, mw, mh), null), n = maskAt(masksS.hair, null)
+    if (prevB) { let db = 0, dn = 0, c = 0; for (let p = 3; p < b.length; p += 8) { const edge = (b[p] > 0) !== (prevB[p] > 0) || (n[p] > 20 && n[p] < 235); if (!edge && !(b[p] > 0 && b[p] < 255)) continue; db += Math.abs(b[p] - prevB[p]); dn += Math.abs(n[p] - prevN[p]); c++ } if (i > 3) { flick.binary.push(db / (c || 1) / 255); flick.refined.push(dn / (c || 1) / 255) } }
+    prevB = b; prevN = n
+  }
+  res.flicker = { binary: avg(flick.binary), refined: avg(flick.refined) }
+  // ---- 4. lighting: hue error with dim and warm light ----
+  res.lighting = {}
+  for (const [name, mul] of [['dim', [0.55, 0.55, 0.55]], ['warm', [1.08, 0.92, 0.7]], ['cool', [0.85, 0.95, 1.1]]]) {
+    const f = document.createElement('canvas'); f.width = W; f.height = H; const fx = f.getContext('2d', { willReadFrequently: true }); fx.drawImage(f0, 0, 0); const id = fx.getImageData(0, 0, W, H); for (let p = 0; p < id.data.length; p += 4) for (let k = 0; k < 3; k++) id.data[p + k] = Math.min(255, id.data[p + k] * mul[k]); fx.putImageData(id, 0, 0)
+    const hL = new HeadTracker(), mL = createMasks(false); let B2; for (let i = 0; i < 5; i++) B2 = analyse(f, 20000 + i * 33, hL, mL, null)
+    res.lighting[name] = {}
+    for (const sh of shades.filter((s) => ['Burgundy', 'Copper', 'Rose pink'].includes(s.n))) {
+      const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); x.drawImage(f, 0, 0); const hr2 = createHairRenderer(); hr2.draw(x, mL.hair, { haircolor: { shade: HAIR[0].shades.indexOf(sh), v: 0.85 } }, W, H, f, B2.M, null)
+      const o = px(c); let L = [0, 0, 0], n = 0; for (let i = 0; i < W * H; i++) if (core[i]) { const l = lab(o[i * 4], o[i * 4 + 1], o[i * 4 + 2]); L[0] += l[0]; L[1] += l[1]; L[2] += l[2]; n++ }
+      const t = lab(...[1, 3, 5].map((k) => parseInt(sh.c.slice(k, k + 2), 16))), m = L.map((v) => v / n)
+      res.lighting[name][sh.n] = +Math.abs(((Math.atan2(m[2], m[1]) - Math.atan2(t[2], t[1])) * 57.3 + 540) % 360 - 180).toFixed(1)
+    }
+  }
+  window.__result = res
 }

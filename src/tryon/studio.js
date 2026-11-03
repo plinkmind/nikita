@@ -9,7 +9,7 @@ import { drawMakeup, MESH_IDS } from './makeup.js'
 import { createFaceMesh } from './render/facemesh.js'
 import { JEWELLERY, drawJewellery, resetJewellery, setJewelleryLight, neckFrame } from './jewellery.js'
 import { createLight } from './render/light.js'
-import { drawHairColour, FACE_OVAL } from './hair.js'
+import { createHairRenderer, FACE_OVAL } from './hair.js'
 import { createMasks, cutOccluders } from './render/masks.js'
 import { drawNails } from './nails.js'
 import { drawOutfit, bodyFrom, prepGarment, OUTFIT_IDS } from './outfit.js'
@@ -137,7 +137,7 @@ export function initStudio(hooks = {}) {
   }
   // ---- hair mask (segmentation), smoothed over time so its edge does not shimmer ----
   // one segmenter result -> refined hair mask + face occluder mask (render/masks.js), edge-aware and motion-aware
-  const masks = createMasks(phone), hairTint = document.createElement('canvas')
+  const masks = createMasks(phone)
   const occOff = debugQ.get('occ') === '0' // ?occ=0: makeup is not cut around hair / hands (for comparison)
   // room light estimate (render/light.js), used by jewellery, nail and gloss shine and the 3D pieces
   const light = createLight(), lightOn = () => Object.keys(state).some((id) => { const c = categoryOf(id); return c === 'jewellery' || c === 'nails' || id === 'gloss' })
@@ -152,10 +152,21 @@ export function initStudio(hooks = {}) {
     j3.r.setPieces(want)
     target.drawImage(j3.r.render(M, liveLight(), t, size, want.neck ? neckFrame(M, t) : null), 0, 0)
   }
+  // hair colour (hair.js): the mask is moved to the current frame with the head's position, size and rotation since it was made
+  const hairR = createHairRenderer()
+  let eyes = null, segEyes = null
+  const sinceMask = () => {
+    if (!eyes || !segEyes) return null
+    const [A, B] = segEyes, [A2, B2] = eyes, vx = B.x - A.x, vy = B.y - A.y, ux = B2.x - A2.x, uy = B2.y - A2.y, l = Math.hypot(vx, vy); if (l < 1) return null
+    const k = Math.hypot(ux, uy) / l, r = Math.atan2(uy, ux) - Math.atan2(vy, vx), a = k * Math.cos(r), b = k * Math.sin(r)
+    return { a, b, c: -b, d: a, e: A2.x - (a * A.x - b * A.y), f: A2.y - (b * A.x + a * A.y) }
+  }
   let segHead = null, nose = null // where the head was at the previous mask (the previous mask is moved with the head)
   function updateSeg(now) {
     const c = nose, motion = c && segHead && M ? { dx: c.x - segHead.x, dy: c.y - segHead.y, rel: Math.hypot(c.x - segHead.x, c.y - segHead.y) / M.fw3 } : null
-    models.seg.t.segmentForVideo(vid, now, (r) => { const mk = r.categoryMask; if (mk) { masks.update(mk.getAsUint8Array(), mk.width, mk.height, raw, cam.mirror, motion); segHead = c ? { x: c.x, y: c.y } : null } })
+    // the segmenter reads the SAME picture that is drawn (raw, already mirrored), not the live video element: the video may have moved on
+    // to a newer frame while the face model was running, and a mask from a newer frame lands beside the hair
+    models.seg.t.segmentForVideo(raw, now, (r) => { const mk = r.categoryMask; if (mk) { masks.update(mk.getAsUint8Array(), mk.width, mk.height, raw, false, motion, M && M.alpha > 0.3 ? { x: M.P[1].x, y: M.P[1].y - M.fh * 0.1, rx: M.fw3 * 0.65, ry: M.fh * 0.8 } : null); segHead = c ? { x: c.x, y: c.y } : null; segEyes = eyes } })
   }
   function drawDebug(w, h, need) { // tracking diagnostics (add ?debug to the page address)
     octx.save()
@@ -225,7 +236,7 @@ export function initStudio(hooks = {}) {
     catch (e) { say(describeError(e)); if (!cam.active) stopLoop(); return }
     running = true; dirty = true; say(''); sync(); loadTracker(); cancelAnimationFrame(raf); loop()
   }
-  function resetTracking() { masks.reset(); segHead = null; head.reset(); head.presence.reset(); M = null; resetJewellery(); pose = null; poseFilter.reset(); posePresence.reset(); hands = []; Object.keys(handSlots).forEach((k) => delete handSlots[k]); lastVT = -1 }
+  function resetTracking() { masks.reset(); hairR.reset(); segHead = null; segEyes = null; eyes = null; head.reset(); head.presence.reset(); M = null; resetJewellery(); pose = null; poseFilter.reset(); posePresence.reset(); hands = []; Object.keys(handSlots).forEach((k) => delete handSlots[k]); lastVT = -1 }
   function stopLoop() { running = false; cancelAnimationFrame(raf); resetTracking(); hint.hidden = true; sync() }
   function stop() {
     cam.stop(); stopLoop(); octx.clearRect(0, 0, out.width, out.height)
@@ -275,7 +286,8 @@ export function initStudio(hooks = {}) {
         try { lm = tracker.detectForVideo(vid, now).faceLandmarks[0] || null } catch { /* skipped frame */ }
         stat.detMs = stat.detMs * 0.9 + (performance.now() - t0) * 0.1
         M = head.update(lm, w, h, cam.mirror, now)
-        nose = lm ? { x: cam.mirror ? w - lm[168].x * w : lm[168].x * w, y: lm[168].y * h } : null // unsmoothed: exact frame-to-frame motion
+        const pt = (i) => ({ x: cam.mirror ? w - lm[i].x * w : lm[i].x * w, y: lm[i].y * h })
+        nose = lm ? pt(168) : null; eyes = lm ? [pt(33), pt(263)] : null // unsmoothed: exact frame-to-frame motion
         if (M && lightOn()) light.update(M, raw, now)
       } else if (!need.has('face')) M = null
       for (const k of ['hand', 'pose', 'seg']) {
@@ -299,7 +311,7 @@ export function initStudio(hooks = {}) {
     // draw, back to front: hair colour, your clothing photo, the real face on top of it, face items (makeup, jewellery), nails
     // the newest mask may be from an earlier frame (the segmenter does not run on every frame): move it with the head
     const segOff = nose && segHead ? { x: nose.x - segHead.x, y: nose.y - segHead.y } : null
-    if (need.has('seg') && masks.hair) drawHairColour(fctx, masks.hair, hairTint, state, w, h, raw, segOff)
+    if (need.has('seg') && masks.hair) stat.hairPath = hairR.draw(fctx, masks.hair, state, w, h, raw, M && M.alpha > 0.3 ? M : null, sinceMask())
     let B = need.has('pose') ? bodyFrom(pose) : null
     // cross-check the body model against the face: shoulders must be below the chin and about 1.5 to 4.5 face widths apart.
     // A reading that fails (e.g. a close-up with the shoulders out of the picture) is not used, so nothing is drawn on the head.
@@ -343,7 +355,7 @@ export function initStudio(hooks = {}) {
     if (newFrame) { perf.ring[perf.n % perf.ring.length] = performance.now() - now; perf.n++ }
     // adaptive budget: if a frame takes longer than the camera interval, run the secondary models less often (never the face)
     if (frameNo % 15 === 0) budgetK = stat.procMs > (phone ? 50 : 38) ? Math.min(4, budgetK + 1) : stat.procMs < (phone ? 28 : 22) ? Math.max(1, budgetK - 1) : budgetK
-    if (debug) { if (debugDraw) drawDebug(w, h, need); window.__glamify = { perf: perfSummary(), cam: stat.cam, models: Object.keys(models).filter((k) => models[k].t), need: [...need], hint: hint.hidden ? '' : hint.textContent, neck: M && M.shoulders !== undefined ? !!M.shoulders : null, frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, faceJumpsHeld: head.jumps, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), mesh: !!mesh && mesh.ok, j3: j3.r ? 'on' : j3.r === false ? 'failed' : 'off', light: light.value.ok ? { x: +light.value.dir.x.toFixed(2), y: +light.value.dir.y.toFixed(2), z: +light.value.dir.z.toFixed(2), contrast: +light.value.contrast.toFixed(2), tint: light.value.tint.map((v) => +v.toFixed(2)), bright: +light.value.bright.toFixed(2) } : null, hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
+    if (debug) { if (debugDraw) drawDebug(w, h, need); window.__glamify = { perf: perfSummary(), cam: stat.cam, models: Object.keys(models).filter((k) => models[k].t), need: [...need], hint: hint.hidden ? '' : hint.textContent, neck: M && M.shoulders !== undefined ? !!M.shoulders : null, frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, faceJumpsHeld: head.jumps, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), mesh: !!mesh && mesh.ok, hairPath: stat.hairPath || null, j3: j3.r ? 'on' : j3.r === false ? 'failed' : 'off', light: light.value.ok ? { x: +light.value.dir.x.toFixed(2), y: +light.value.dir.y.toFixed(2), z: +light.value.dir.z.toFixed(2), contrast: +light.value.contrast.toFixed(2), tint: light.value.tint.map((v) => +v.toFixed(2)), bright: +light.value.bright.toFixed(2) } : null, hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
     if (compare) {
       const x = (w * split.value) / 100
       octx.save(); octx.beginPath(); octx.rect(0, 0, x, h); octx.clip(); octx.drawImage(raw, 0, 0); octx.restore()
@@ -506,7 +518,7 @@ export function initStudio(hooks = {}) {
     start() // runs from the tap on "Try It On", so the browser allows the camera prompt
   }
   function close() {
-    photo.hide(); cam.stop(); stopLoop(); releaseIdle(new Set(), performance.now(), true); if (mesh) { mesh.dispose(); mesh = undefined } if (j3.r) { j3.r.dispose(); j3.r = null } light.reset(); root.hidden = true; document.body.classList.remove('studio-open')
+    photo.hide(); cam.stop(); stopLoop(); releaseIdle(new Set(), performance.now(), true); if (mesh) { mesh.dispose(); mesh = undefined } if (j3.r) { j3.r.dispose(); j3.r = null } hairR.dispose(); light.reset(); root.hidden = true; document.body.classList.remove('studio-open')
     lastOpener?.focus?.({ preventScroll: true }); hooks.onClose?.()
   }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !root.hidden) close() })
