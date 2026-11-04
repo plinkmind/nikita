@@ -77,6 +77,7 @@ export const SHAPE = { minCutoff: 2.0, beta: 0.15, dCutoff: 1 } // units: canoni
 // projection. Head-turn angle improved (2.6 -> 2.1 deg) but nod got worse (1.1 -> 1.5 deg). So the flat model stays; FOCAL
 // (focal length / longer frame side, e.g. 0.75) switches the perspective model on for future tests.
 export const FOCAL = 0
+const VIEW_FOCAL = 0.75 // for visibility only: typical phone / webcam field of view (about 67 deg across the long side)
 
 // Missed frames and wrong detections (measured with tests/rig/face.mjs)
 const PREDICT = true, PRED_TAU = 0.12, PRED_MAX_MS = 250 // continue the movement for up to 250 ms without a detection
@@ -179,7 +180,10 @@ export class HeadTracker {
     let a = P[33], b = P[263]; if (a.x > b.x) [a, b] = [b, a]
     const project = (name) => {
       const A = ANCHORS[name], p = persp(apply(fit, A.p)), n = rotate(fit.R, A.n)
-      return { x: mx(p[0]), y: p[1], z: p[2], k: p[3], facing: -n[2] } // facing > 0: surface turned toward the camera; k: size factor vs the face
+      // facing is measured against the camera's line of sight to THIS point: a head beside the middle of the picture is seen
+      // slightly from the side, so its far ear goes out of view earlier (tests/rig "partial": a head 15 cm off centre)
+      const F = VIEW_FOCAL * Math.max(W, H), vx = (p[0] - W / 2) / F, vy = (p[1] - H / 2) / F, vl = Math.hypot(vx, vy, 1)
+      return { x: mx(p[0]), y: p[1], z: p[2], k: p[3], facing: -(n[0] * vx + n[1] * vy + n[2]) / vl } // facing > 0: surface turned toward the camera; k: size factor vs the face
     }
     // like project(), but with only a fraction `beta` of the head's rotation away from facing the camera (for points that sit
     // below the head, on the neck/chest, which turn less than the head does)

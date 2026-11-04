@@ -60,17 +60,20 @@ function drop(col) {
   const cap = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.25, 6, 1, true), m); cap.position.y = -1.55; cap.rotation.x = Math.PI; g.add(cap)
   g.userData.hang = true; return g
 }
-// necklace: beads along a U curve in front of the collarbones, with a pendant (centimetres, origin = middle of the neck line)
+// necklace: a closed loop of beads AROUND the neck (centimetres, origin = the front base of the neck, z toward the viewer). The back
+// of the loop is hidden by an invisible neck (a cylinder in the depth buffer), so the chain disappears behind the neck instead
+// of ending in mid-air at the sides. The front hangs lower than the back, as a real necklace does.
 function necklace(col, fwCm) {
-  const g = new THREE.Group(), m = gold(col), half = fwCm * 0.36, dropCm = fwCm * 0.5
-  const curve = new THREE.QuadraticBezierCurve3(new THREE.Vector3(-half, fwCm * 0.18, -1.5), new THREE.Vector3(0, -dropCm, 1.2), new THREE.Vector3(half, fwCm * 0.18, -1.5))
-  const n = 46, beads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.2, 14, 10), m, n), mtx = new THREE.Matrix4()
-  for (let i = 0; i < n; i++) { const p = curve.getPoint(i / (n - 1)); mtx.makeTranslation(p.x, p.y, p.z); beads.setMatrixAt(i, mtx) } g.add(beads)
-  const mid = curve.getPoint(0.5)
-  const pend = new THREE.Group(); pend.position.copy(mid)
+  const g = new THREE.Group(), m = gold(col), rx = 6.4, rz = 6.1, cz = -5.2, front = -fwCm * 0.16, back = 3.0
+  const pt = (th) => { const c = ((1 + Math.cos(th)) / 2) ** 2; return new THREE.Vector3(rx * Math.sin(th), back + (front - back) * c, cz + rz * Math.cos(th)) }
+  const n = 96, beads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.2, 14, 10), m, n), mtx = new THREE.Matrix4()
+  for (let i = 0; i < n; i++) { const p = pt((i / n) * Math.PI * 2); mtx.makeTranslation(p.x, p.y, p.z); beads.setMatrixAt(i, mtx) } g.add(beads)
+  const mid = pt(0)
+  const pend = new THREE.Group(); pend.position.set(mid.x, mid.y, mid.z + 0.35)
   const frame = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.1, 12, 40), m); frame.position.y = -0.75; pend.add(frame)
   const stone = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 1), gem(0xd0103a)); stone.scale.z = 0.55; stone.position.y = -0.75; pend.add(stone)
   g.add(pend)
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(5.6, 6.2, 18, 28), new THREE.MeshBasicMaterial({ colorWrite: false })); neck.position.set(0, 3, cz); neck.scale.z = 0.92; neck.renderOrder = -1; g.add(neck)
   return g
 }
 export const DEMO = { stud, hoop, jhumka, drop, necklace }
@@ -150,7 +153,9 @@ export function createJewellery3D() {
     }
     if (neckG.children.length && neckFrame) {
       const nz = -apply(fit, ANCHORS.neck.p)[2] // depth of the neck line
-      neckG.position.set(neckFrame.o.x, -neckFrame.o.y, nz); neckG.rotation.set(0, 0, -neckFrame.rot)
+      // the necklace turns with the BODY (shoulders from the body model, their depth difference), not with the head
+      const S = M.shoulders, bodyYaw = S && S.l.z != null ? Math.max(-0.8, Math.min(0.8, 0.7 * Math.atan2(S.r.z - S.l.z, Math.abs(S.r.x - S.l.x) || 1))) : 0
+      neckG.position.set(neckFrame.o.x, -neckFrame.o.y, nz); neckG.rotation.set(0, bodyYaw, -neckFrame.rot, 'ZYX')
       const k = s * (0.8 + 0.4 * (size.neck ?? 0.5)); neckG.scale.set(k, k, k)
     }
     renderer.render(scene, camera)

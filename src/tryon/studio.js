@@ -4,6 +4,7 @@ import { Camera, describeError } from './camera.js'
 import { createFaceTracker, createPoseTracker, createHandTracker, createSegmenter } from './track/mediapipe.js'
 import { HeadTracker } from './track/head.js'
 import { PointSetFilter, Presence } from './track/filters.js'
+import { HandTracker } from './track/hands.js'
 import { initPhoto } from './photo.js'
 import { drawMakeup, MESH_IDS } from './makeup.js'
 import { createFaceMesh } from './render/facemesh.js'
@@ -12,7 +13,7 @@ import { createLight } from './render/light.js'
 import { createHairRenderer, FACE_OVAL } from './hair.js'
 import { createMasks, cutOccluders } from './render/masks.js'
 import { drawNails } from './nails.js'
-import { drawOutfit, bodyFrom, prepGarment, OUTFIT_IDS } from './outfit.js'
+import { drawOutfit, bodyFrom, prepGarment, OUTFIT_IDS, outfitRenderer, resetOutfit } from './outfit.js'
 import { ALL_PRODUCTS as ALL, CATEGORIES, groupsOf, findProduct, categoryOf, iconOf, needOf } from './catalog.js'
 import { getLooks, saveLook, deleteLook, getFavs, isFav, toggleFav } from './looks.js'
 
@@ -99,42 +100,34 @@ export function initStudio(hooks = {}) {
   // ---- body (pose): own filter, visibility per point, graceful loss ----
   const poseFilter = new PointSetFilter({ minCutoff: 1.0, beta: 25 }), posePresence = new Presence(200, 300, 120)
   let pose = null, poseT = 0
+  // person mask (body outline) from the pose model, at about 1/5 of the picture size, mirrored like the picture. It is made only
+  // when an outfit is on, and remembers where the shoulders were, so it can be moved with the body until the next one.
+  const personCv = document.createElement('canvas'); let person = null
+  function personFrom(mk, w, h) {
+    const mw = mk.width, mh = mk.height, f = mk.getAsFloat32Array(), W = Math.max(32, Math.round(w / 5)), H = Math.max(24, Math.round(h / 5))
+    if (personCv.width !== W || personCv.height !== H) { personCv.width = W; personCv.height = H }
+    const x = personCv.getContext('2d'), d = x.createImageData(W, H), px = d.data
+    for (let j = 0; j < H; j++) { const sj = Math.min(mh - 1, ((j + 0.5) * mh / H) | 0); for (let i = 0; i < W; i++) { const si = Math.min(mw - 1, (((cam.mirror ? W - 1 - i : i) + 0.5) * mw / W) | 0); px[(j * W + i) * 4 + 3] = f[sj * mw + si] * 255 } }
+    x.putImageData(d, 0, 0)
+    return { canvas: personCv, at: pose ? { x: (pose[11].x + pose[12].x) / 2, y: (pose[11].y + pose[12].y) / 2 } : null }
+  }
   function updatePose(now, w, h) {
-    const p = models.pose.t.detectForVideo(vid, now).landmarks[0]
+    const res = models.pose.t.detectForVideo(vid, now), p = res.landmarks[0]
     const dt = poseT ? (now - poseT) / 1000 : 0; poseT = now
     if (p) {
       if (posePresence.stale(now)) poseFilter.reset()
       const pts = p.map((q) => ({ x: (cam.mirror ? 1 - q.x : q.x) * w, y: q.y * h, z: (q.z || 0) * w, v: q.visibility ?? 0 }))
       pose = poseFilter.filter(pts, dt, Math.hypot(pts[11].x - pts[12].x, pts[11].y - pts[12].y) || w * 0.3)
     }
-    posePresence.update(now, !!p); if (posePresence.a <= 0) { pose = null; poseFilter.reset() }
+    const mk = res.segmentationMasks?.[0]
+    if (mk) { try { if (p && Object.keys(state).some((id) => OUTFIT_IDS.has(id))) { const t0 = performance.now(); person = personFrom(mk, w, h); stat.personMs = performance.now() - t0 } } catch { person = null } try { mk.close() } catch { /* already closed */ } }
+    if (!p) person = null
+    posePresence.update(now, !!p); if (posePresence.a <= 0) { pose = null; person = null; poseFilter.reset() }
   }
-  // ---- hands: one filter per (true) hand, 2D picture points AND 3D world points, low-confidence readings ignored ----
-  const handSlots = {}
-  let handSeenAt = -1e9
+  // ---- hands (track/hands.js): identity by position, voted left/right, smoothing, missed-frame prediction, jump guard ----
+  const handTracker = new HandTracker()
   let hands = []
-  function updateHands(now, w, h) {
-    const r = models.hand.t.detectForVideo(vid, now), seen = new Set()
-    r.landmarks.forEach((lm, i) => {
-      const hd = r.handedness[i]?.[0]; if (!hd || hd.score < 0.6) return // not sure it is a hand: ignore it
-      handSeenAt = now
-      const right = hd.categoryName === 'Left' // the model assumes a mirrored image; we analyse the un-mirrored camera picture
-      const key = right ? 'R' : 'L', s = (handSlots[key] ||= { f: new PointSetFilter({ minCutoff: 1.2, beta: 30 }), fw: new PointSetFilter({ minCutoff: 1.2, beta: 30 }), pr: new Presence(150, 220, 90), t: 0 })
-      const dt = s.t ? (now - s.t) / 1000 : 0; s.t = now
-      if (s.pr.stale(now)) { s.f.reset(); s.fw.reset() }
-      const P = lm.map((q) => ({ x: q.x * w, y: q.y * h, z: (q.z || 0) * w }))
-      const size = Math.hypot(P[0].x - P[9].x, P[0].y - P[9].y) || 100
-      s.P = s.f.filter(P, dt, size); s.Wd = s.fw.filter(r.worldLandmarks[i].map((q) => ({ x: q.x, y: q.y, z: q.z })), dt, 0.09); s.right = right
-      seen.add(key)
-    })
-    hands = []
-    for (const key of ['L', 'R']) {
-      const s = handSlots[key]; if (!s) continue
-      const a = s.pr.update(now, seen.has(key))
-      s.streak = seen.has(key) ? (s.streak || 0) + 1 : 0
-      if (a > 0 && s.P) { s.sure = s.streak >= 2 || (s.sure && a > 0); hands.push({ P: s.P, Wd: s.Wd, right: s.right, alpha: a, sure: s.sure }) } else { s.f.reset(); s.fw.reset(); s.P = null; s.sure = false }
-    }
-  }
+  function updateHands(now, w, h) { hands = handTracker.update(models.hand.t.detectForVideo(vid, now), w, h, now) }
   // ---- hair mask (segmentation), smoothed over time so its edge does not shimmer ----
   // one segmenter result -> refined hair mask + face occluder mask (render/masks.js), edge-aware and motion-aware
   const masks = createMasks(phone)
@@ -236,7 +229,7 @@ export function initStudio(hooks = {}) {
     catch (e) { say(describeError(e)); if (!cam.active) stopLoop(); return }
     running = true; dirty = true; say(''); sync(); loadTracker(); cancelAnimationFrame(raf); loop()
   }
-  function resetTracking() { masks.reset(); hairR.reset(); segHead = null; segEyes = null; eyes = null; head.reset(); head.presence.reset(); M = null; resetJewellery(); pose = null; poseFilter.reset(); posePresence.reset(); hands = []; Object.keys(handSlots).forEach((k) => delete handSlots[k]); lastVT = -1 }
+  function resetTracking() { masks.reset(); hairR.reset(); segHead = null; segEyes = null; eyes = null; head.reset(); head.presence.reset(); M = null; resetJewellery(); pose = null; person = null; resetOutfit(); poseFilter.reset(); posePresence.reset(); hands = []; handTracker.reset(); lastVT = -1 }
   function stopLoop() { running = false; cancelAnimationFrame(raf); resetTracking(); hint.hidden = true; sync() }
   function stop() {
     cam.stop(); stopLoop(); octx.clearRect(0, 0, out.width, out.height)
@@ -295,7 +288,7 @@ export function initStudio(hooks = {}) {
         // segmenter only for occlusion (no hair colour): every 2nd frame on computers, every 3rd on phones
         if (k === 'seg' && !need.has('seg') && frameNo % ((phone ? 3 : 2) * budgetK)) continue
         // hands only for occlusion (no nails): every 3rd frame, every 6th while no hand has been seen for a second
-        if (k === 'hand' && !need.has('hand') && frameNo % ((performance.now() - handSeenAt < 1000 ? 3 : 6) * budgetK)) continue
+        if (k === 'hand' && !need.has('hand') && frameNo % ((performance.now() - handTracker.seenAt < 1000 ? 3 : 6) * budgetK)) continue
         if (k !== 'hand' && budgetK > 1 && frameNo % budgetK) continue
         if (frameNo % every(k) && !(k === 'pose' && !pose)) continue
         const t0 = performance.now()
@@ -324,7 +317,7 @@ export function initStudio(hooks = {}) {
     const occ = need.has('segOcc') && masks.hair
     if (outfitOn && B) {
       if (occ) { preG.width !== w && (preG.width = w); preG.height !== h && (preG.height = h); preG.getContext('2d').drawImage(fin, 0, 0) } // the picture before the garment
-      fctx.save(); fctx.globalAlpha = posePresence.a; drawOutfit(fctx, B, state, customImg, t, raw, pose, M); fctx.restore(); if (M) restoreFace(fctx, M)
+      fctx.save(); fctx.globalAlpha = posePresence.a; drawOutfit(fctx, B, state, customImg, t, raw, pose, M, { person: person && person.at ? { canvas: person.canvas, off: { x: B.mid.x - person.at.x, y: B.mid.y - person.at.y } } : null, light: liveLight() }); fctx.restore(); if (M) restoreFace(fctx, M)
       if (occ) restoreMasked(fctx, preG, masks.hair, w, h, segOff) // hair hanging in front of the garment stays on top
     }
     if (M) {
@@ -355,7 +348,7 @@ export function initStudio(hooks = {}) {
     if (newFrame) { perf.ring[perf.n % perf.ring.length] = performance.now() - now; perf.n++ }
     // adaptive budget: if a frame takes longer than the camera interval, run the secondary models less often (never the face)
     if (frameNo % 15 === 0) budgetK = stat.procMs > (phone ? 50 : 38) ? Math.min(4, budgetK + 1) : stat.procMs < (phone ? 28 : 22) ? Math.max(1, budgetK - 1) : budgetK
-    if (debug) { if (debugDraw) drawDebug(w, h, need); window.__glamify = { perf: perfSummary(), cam: stat.cam, models: Object.keys(models).filter((k) => models[k].t), need: [...need], hint: hint.hidden ? '' : hint.textContent, neck: M && M.shoulders !== undefined ? !!M.shoulders : null, frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, faceJumpsHeld: head.jumps, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), mesh: !!mesh && mesh.ok, hairPath: stat.hairPath || null, j3: j3.r ? 'on' : j3.r === false ? 'failed' : 'off', light: light.value.ok ? { x: +light.value.dir.x.toFixed(2), y: +light.value.dir.y.toFixed(2), z: +light.value.dir.z.toFixed(2), contrast: +light.value.contrast.toFixed(2), tint: light.value.tint.map((v) => +v.toFixed(2)), bright: +light.value.bright.toFixed(2) } : null, hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
+    if (debug) { if (debugDraw) drawDebug(w, h, need); window.__glamify = { perf: perfSummary(), cam: stat.cam, models: Object.keys(models).filter((k) => models[k].t), need: [...need], hint: hint.hidden ? '' : hint.textContent, neck: M && M.shoulders !== undefined ? !!M.shoulders : null, frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, faceJumpsHeld: head.jumps, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), mesh: !!mesh && mesh.ok, hairPath: stat.hairPath || null, j3: j3.r ? 'on' : j3.r === false ? 'failed' : 'off', light: light.value.ok ? { x: +light.value.dir.x.toFixed(2), y: +light.value.dir.y.toFixed(2), z: +light.value.dir.z.toFixed(2), contrast: +light.value.contrast.toFixed(2), tint: light.value.tint.map((v) => +v.toFixed(2)), bright: +light.value.bright.toFixed(2) } : null, hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, person: !!person, personMs: +(stat.personMs || 0).toFixed(1), outfitPath: outfitRenderer(), bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
     if (compare) {
       const x = (w * split.value) / 100
       octx.save(); octx.beginPath(); octx.rect(0, 0, x, h); octx.clip(); octx.drawImage(raw, 0, 0); octx.restore()
@@ -490,7 +483,7 @@ export function initStudio(hooks = {}) {
     const f = e.target.closest('[data-up]'); if (!f || !f.files[0]) return
     const file = f.files[0]
     if (!/^image\/(png|jpe?g|webp)$/.test(file.type) || file.size > 8e6) { customNote = 'Please choose a PNG, JPG or WebP image under 8 MB.'; renderList(); return }
-    try { const r = prepGarment(await createImageBitmap(file)); customImg = r.canvas; customNote = r.cleaned ? 'Plain background removed. If the edges look rough, use a photo on a plain background.' : 'Photo added. A garment on a plain background works best.' }
+    try { const r = prepGarment(await createImageBitmap(file)); customImg = r.canvas; customNote = r.mode === 'busy' ? 'Background removed (it was not plain, so check the edges). A garment on a plain background works best.' : r.cleaned ? 'Background removed. If the edges look rough, use a photo on a plain background.' : 'Photo added. A garment on a plain background works best.' }
     catch { customNote = 'That image could not be read. Try another one.' }
     renderList()
   })

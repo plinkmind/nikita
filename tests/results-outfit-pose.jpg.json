@@ -1,0 +1,128 @@
+{
+ "mean": {
+  "flat": {
+   "spillAboveHips": 0.154,
+   "forearmCovered": 0.127,
+   "chromaErr": 4.8,
+   "lightnessShift": -5.267,
+   "drawMs": 0.2
+  },
+  "warp": {
+   "spillAboveHips": 0.047,
+   "forearmCovered": 0.096,
+   "chromaErr": 2.217,
+   "lightnessShift": -1.35,
+   "drawMs": 2.083
+  }
+ },
+ "rows": [
+  {
+   "name": "near",
+   "sw": 211,
+   "flat": {
+    "spillAboveHips": 0.153,
+    "forearmCovered": 0.146,
+    "chromaErr": 4.8,
+    "lightnessShift": -5.3,
+    "drawMs": 0.3
+   },
+   "warp": {
+    "spillAboveHips": 0.043,
+    "forearmCovered": 0.123,
+    "chromaErr": 2.1,
+    "lightnessShift": -1.3,
+    "drawMs": 5
+   }
+  },
+  {
+   "name": "mid",
+   "sw": 166,
+   "flat": {
+    "spillAboveHips": 0.15,
+    "forearmCovered": 0.111,
+    "chromaErr": 4.8,
+    "lightnessShift": -5.4,
+    "drawMs": 0.1
+   },
+   "warp": {
+    "spillAboveHips": 0.042,
+    "forearmCovered": 0.069,
+    "chromaErr": 2.2,
+    "lightnessShift": -1.4,
+    "drawMs": 0.6
+   }
+  },
+  {
+   "name": "far",
+   "sw": 118,
+   "flat": {
+    "spillAboveHips": 0.147,
+    "forearmCovered": 0.126,
+    "chromaErr": 4.8,
+    "lightnessShift": -5.2,
+    "drawMs": 0.2
+   },
+   "warp": {
+    "spillAboveHips": 0.053,
+    "forearmCovered": 0.093,
+    "chromaErr": 2.3,
+    "lightnessShift": -1.4,
+    "drawMs": 2.6
+   }
+  },
+  {
+   "name": "left",
+   "sw": 150,
+   "flat": {
+    "spillAboveHips": 0.167,
+    "forearmCovered": 0.136,
+    "chromaErr": 4.8,
+    "lightnessShift": -5.3,
+    "drawMs": 0.2
+   },
+   "warp": {
+    "spillAboveHips": 0.054,
+    "forearmCovered": 0.108,
+    "chromaErr": 2.3,
+    "lightnessShift": -1.3,
+    "drawMs": 2.1
+   }
+  },
+  {
+   "name": "tilt+",
+   "sw": 170,
+   "flat": {
+    "spillAboveHips": 0.161,
+    "forearmCovered": 0.12,
+    "chromaErr": 4.8,
+    "lightnessShift": -5.2,
+    "drawMs": 0.2
+   },
+   "warp": {
+    "spillAboveHips": 0.044,
+    "forearmCovered": 0.102,
+    "chromaErr": 2.2,
+    "lightnessShift": -1.4,
+    "drawMs": 0.8
+   }
+  },
+  {
+   "name": "tilt-",
+   "sw": 169,
+   "flat": {
+    "spillAboveHips": 0.144,
+    "forearmCovered": 0.12,
+    "chromaErr": 4.8,
+    "lightnessShift": -5.2,
+    "drawMs": 0.2
+   },
+   "warp": {
+    "spillAboveHips": 0.045,
+    "forearmCovered": 0.082,
+    "chromaErr": 2.2,
+    "lightnessShift": -1.3,
+    "drawMs": 1.4
+   }
+  }
+ ]
+}

@@ -229,3 +229,25 @@ async function lightest() {
   window.__result = res
 }
 tests.lightest = lightest
+
+// ---------- partial face visibility: the head moved toward / past the picture edge ----------
+// For each position: is the face found, where are the ear lobe anchors vs the scan's real lobes (cm), and is each earring
+// shown only when its lobe is really in the picture and turned toward the camera.
+import { earVisibility as eV } from '../../src/tryon/track/head.js'
+async function partial() {
+  const R = await createRig(), det = await createFaceTracker(), res = []; let t = 0, nc = null
+  for (const P of [{ x: 0 }, { x: 10 }, { x: 15 }, { x: 18 }, { x: 21 }, { x: 24 }, { x: -18 }, { x: 15, yaw: 0.5 }, { x: -15, yaw: -0.5 }, { y: 12 }, { y: -14 }]) {
+    const head = new HeadTracker(); let M = null
+    R.pose({ dist: 60, ...P }); for (let i = 0; i < 8; i++) { nc = addNoise(R.render(), 2, nc); t += 33.3; M = head.update(det.detectForVideo(nc, t).faceLandmarks[0] || null, R.W, R.H, false, t) }
+    const row = { pose: P, found: !!M, inFrame: M ? +M.inFrame.toFixed(2) : 0, ears: {} }
+    for (const n of ['lobeL', 'lobeR']) {
+      const w = R.world(LOBES[n]), g = R.project(w), gIn = g.x >= 0 && g.x <= R.W && g.y >= 0 && g.y <= R.H, gVis = gIn && visible(R, w)
+      if (!M) { row.ears[n] = { trueVisible: gVis, shown: false }; continue }
+      const a = M.project(n), shown = eV(a.facing) > 0.5 && a.x > -50 && a.x < R.W + 50 && a.y > -50 && a.y < R.H + 50
+      row.ears[n] = { errCm: +(Math.hypot(a.x - g.x, a.y - g.y) / R.pxPerCm(w)).toFixed(2), trueVisible: gVis, shown }
+    }
+    res.push(row)
+  }
+  window.__result = res
+}
+tests.partial = partial

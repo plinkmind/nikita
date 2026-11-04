@@ -21,3 +21,15 @@ far, turn): yellow = named face anchors (eyes, brows, nose, lips, cheeks, jaw, c
 Update 13: `hair-colour-pipeline.jpg` - six shades on two real photos; in each block the columns are: before (binary mask +
 flat tint), Update 11 (refined mask + flat tint), new (Hair Segmenter + protected mask + GPU recolouring with the real strands
 and shine). `hair-colour-live.jpg` - the full live studio (fake camera, moving portrait), ash grey.
+
+Update 14: `nails-before-after.jpg` - top row: real nails (no polish), previous nail overlay, new red, new nude; bottom row:
+new French, chrome, almond shape. `nails-live-moving.jpg` - the full live studio (fake camera: the hand photo turning and
+moving, mirrored selfie view) with red polish.
+
+Update 15: `3d-jewellery-neck.jpg` - 3D jhumkas and the 3D necklace (now a loop around the neck, the back hidden by the neck)
+on the scanned test head: front, turn 34 deg, turn -46 deg (far earring hidden behind the head), nod down, body turned, tilt.
+
+Update 16: `step7-garment-cutout.png` - synthetic garment photos (striped and printed tee) on wood, cobblestones, trees, a street
+and a checkerboard: photo, then the cut-out on a pink check (what was kept). `step7-outfit-pose.png` and `step7-outfit-portrait.png` -
+the live outfit on two real photos at 6 framings (near, middle, far, shifted, tilted): left the previous flat garment, right the new
+body-following warp. `step7-outfit-poses.png` - the warp on synthetic poses (red: body points; grey: where the arm is drawn back).

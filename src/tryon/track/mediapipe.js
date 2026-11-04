@@ -46,8 +46,9 @@ export const createFaceTracker = () => make('FaceLandmarker', {
 }, MODEL_PATHS.face)
 
 // phones use the lite body model (fast); computers use the full model (more accurate shoulders, elbows and hips)
-export const createPoseTracker = () => make('PoseLandmarker', {
+export const createPoseTracker = (seg = true) => make('PoseLandmarker', {
   runningMode: 'VIDEO', numPoses: 1, minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.6, minTrackingConfidence: 0.5,
+  outputSegmentationMasks: seg, // body outline (person mask) for the outfit preview: the garment stays inside it, arms are cut along it
 }, phone() ? MODEL_PATHS.poseLite : MODEL_PATHS.poseFull)
 
 export const createHandTracker = () => make('HandLandmarker', {

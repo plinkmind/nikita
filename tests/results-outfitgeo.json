@@ -1,0 +1,201 @@
+{
+ "dbg": {
+  "w": 521,
+  "h": 621,
+  "top": 8,
+  "bot": 620,
+  "cx": 260,
+  "prof": [
+   153,
+   153,
+   153,
+   152,
+   151,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150,
+   150
+  ]
+ },
+ "geo": {
+  "sleeves": true,
+  "pit": 162,
+  "sh": 39,
+  "shHalf": 153,
+  "body": 150,
+  "sl": {
+   "dir": [
+    -0.32,
+    0.95
+   ],
+   "len": 177
+  }
+ },
+ "rows": [
+  {
+   "pose": "down",
+   "sw": 110,
+   "foldedArea": 0,
+   "sleeveAngleErrDeg": [
+    2.8,
+    2.8
+   ],
+   "shoulderErrSW": 0.059,
+   "yawDeg": 0
+  },
+  {
+   "pose": "down",
+   "sw": 200,
+   "foldedArea": 0,
+   "sleeveAngleErrDeg": [
+    2.8,
+    2.8
+   ],
+   "shoulderErrSW": 0.059,
+   "yawDeg": 0
+  },
+  {
+   "pose": "out",
+   "sw": 110,
+   "foldedArea": 0.0005,
+   "sleeveAngleErrDeg": [
+    11.1,
+    11.1
+   ],
+   "shoulderErrSW": 0.06,
+   "yawDeg": 0
+  },
+  {
+   "pose": "out",
+   "sw": 200,
+   "foldedArea": 0.0005,
+   "sleeveAngleErrDeg": [
+    11.1,
+    11.1
+   ],
+   "shoulderErrSW": 0.06,
+   "yawDeg": 0
+  },
+  {
+   "pose": "up",
+   "sw": 110,
+   "foldedArea": 0.0215,
+   "sleeveAngleErrDeg": [
+    17.2,
+    17.2
+   ],
+   "shoulderErrSW": 0.061,
+   "yawDeg": 0
+  },
+  {
+   "pose": "up",
+   "sw": 200,
+   "foldedArea": 0.0215,
+   "sleeveAngleErrDeg": [
+    17.2,
+    17.2
+   ],
+   "shoulderErrSW": 0.061,
+   "yawDeg": 0
+  },
+  {
+   "pose": "akimbo",
+   "sw": 110,
+   "foldedArea": 0,
+   "sleeveAngleErrDeg": [
+    1.9,
+    1.9
+   ],
+   "shoulderErrSW": 0.06,
+   "yawDeg": 0
+  },
+  {
+   "pose": "akimbo",
+   "sw": 200,
+   "foldedArea": 0,
+   "sleeveAngleErrDeg": [
+    1.9,
+    1.9
+   ],
+   "shoulderErrSW": 0.06,
+   "yawDeg": 0
+  },
+  {
+   "pose": "crossed",
+   "sw": 110,
+   "foldedArea": 0,
+   "sleeveAngleErrDeg": [
+    1.8,
+    1.8
+   ],
+   "shoulderErrSW": 0.059,
+   "yawDeg": 0
+  },
+  {
+   "pose": "crossed",
+   "sw": 200,
+   "foldedArea": 0,
+   "sleeveAngleErrDeg": [
+    1.8,
+    1.8
+   ],
+   "shoulderErrSW": 0.059,
+   "yawDeg": 0
+  },
+  {
+   "pose": "lean",
+   "sw": 110,
+   "foldedArea": 0,
+   "sleeveAngleErrDeg": [
+    3.6,
+    2
+   ],
+   "shoulderErrSW": 0.06,
+   "yawDeg": 0
+  },
+  {
+   "pose": "lean",
+   "sw": 200,
+   "foldedArea": 0,
+   "sleeveAngleErrDeg": [
+    3.6,
+    2
+   ],
+   "shoulderErrSW": 0.06,
+   "yawDeg": 0
+  },
+  {
+   "pose": "turned",
+   "sw": 110,
+   "foldedArea": 0.0121,
+   "sleeveAngleErrDeg": [
+    2.7,
+    2.7
+   ],
+   "shoulderErrSW": 0.074,
+   "yawDeg": 24.5
+  },
+  {
+   "pose": "turned",
+   "sw": 200,
+   "foldedArea": 0.0121,
+   "sleeveAngleErrDeg": [
+    2.7,
+    2.7
+   ],
+   "shoulderErrSW": 0.074,
+   "yawDeg": 24.5
+  }
+ ]
+}

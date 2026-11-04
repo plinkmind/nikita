@@ -151,8 +151,12 @@ export function neckFrame(M, T) {
   let target = 0
   if (S) {
     const sw = Math.hypot(S.r.x - S.l.x, S.r.y - S.l.y), ux = { x: (S.r.x - S.l.x) / sw, y: (S.r.y - S.l.y) / sw }
-    const b = { x: (S.l.x + S.r.x) / 2 + ux.y * 0.2 * sw, y: (S.l.y + S.r.y) / 2 - ux.x * 0.2 * sw }
-    if (Math.hypot(b.x - head.x, b.y - head.y) < 6 * M.cm) { target = 1; NF.body = b; NF.rot = Math.atan2(ux.y, ux.x) }
+    const b0 = { x: (S.l.x + S.r.x) / 2 + ux.y * 0.2 * sw, y: (S.l.y + S.r.y) / 2 - ux.x * 0.2 * sw }
+    // The body model's two shoulder points are often uneven (clothes, posture), which shifted the necklace sideways by ~2 cm on
+    // the test head. Sideways the neck base is taken halfway between the shoulders and the head's own estimate, its height
+    // 3/4 from the shoulders (tests/rig/neck.mjs: median error 1.9 -> 1.0 cm, 95th percentile 3.1 -> 2.3 cm).
+    const b = { x: 0.5 * b0.x + 0.5 * head.x, y: 0.75 * b0.y + 0.25 * head.y }
+    if (Math.hypot(b0.x - head.x, b0.y - head.y) < 6 * M.cm) { target = 1; NF.body = b; NF.rot = Math.atan2(ux.y, ux.x) }
   }
   NF.w += (target - NF.w) * (1 - Math.exp(-dt * 8))
   const w = NF.body ? NF.w : 0, hr = M.roll * 0.35

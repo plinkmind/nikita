@@ -1,6 +1,168 @@
 # Tracking audit
 
-## Update 13 (latest): Step 3 - hair segmentation and hair colour
+## Update 16 (latest): Step 7 - body tracking and outfit try-on
+Changed: `src/tryon/outfit.js` (garment photo preparation, drawing), new `src/tryon/garmentcut.js` (busy-background cut-out),
+new `src/tryon/render/garmentwarp.js` + `garmentgl.js` (body-following garment), `src/tryon/track/mediapipe.js` (person mask
+from the pose model), `src/tryon/studio.js` (person mask, passes it to the outfit; one wording change in the upload note).
+Not changed: face, hair, nails, makeup, jewellery, backend, website UI, the AI photo try-on.
+
+**Two outfit modes, and what each one is:**
+- **A. Live camera preview** (Outfits tab, "My clothing photo"): your garment photo bent onto your body in real time. It is a
+  2D picture warped onto a simple body shape. It is **not** a 3D garment or cloth simulation: no drape, gravity, wrinkles of
+  its own or back side, and a front-view photo cannot show what a garment looks like from the side.
+- **B. AI photo try-on** ("See It On You"): unchanged. A real AI virtual try-on model (FASHN, paid, through the backend; or the
+  free IDM-VTON demo in the browser) makes a new photo of you wearing the garment. That is the realistic mode.
+
+**Body tracking: MediaPipe Pose Landmarker** (lite on phones, full on computers; 33 body points with visibility and depth). Kept.
+It gives shoulders, elbows, wrists and hips, which is what a front-view garment needs; it now also outputs a **person mask** (body
+outline). Cost of the mask, measured (`test=posecost`, CPU): pose model 50 -> 56 ms median (+12%), reading the mask back 0.2-4 ms.
+It is only loaded while an outfit is applied.
+
+**1. Garment background removal.** Before: only a plain background (flood fill from the edges); any other photo kept its
+background. Now a second method runs on every photo: colour models of garment and background (k-means in Lab colour, background
+from the border, garment from the middle), a graph cut (max-flow) so the cut follows real edges, a symmetry prior (garment photos
+are front views), background shadows counted as background, then the edge refined at full size with a guided filter. The two are
+merged: the flood fill result minus what the colour models call clearly background, plus what they call clearly garment.
+Test: 48 synthetic garment photos (6 garments incl. stripes and a print x 8 backgrounds incl. wood, bed sheet, gradient, a
+checkerboard and 3 real street photos), true outline known (`tests/run.mjs "test=garment"`):
+
+| Cut-out accuracy (IoU, 1 = perfect) | Before | After |
+|---|---|---|
+| Plain backgrounds (white, checkerboard), median | 0.82 | **0.99** |
+| Plain backgrounds, worst | 0.31 | 0.56 |
+| Busy backgrounds, median | 0.27 (nothing removed) | **0.99** |
+| Busy backgrounds, worst | 0.00 | 0.75 |
+| Background left, busy (share of garment area) | 1.54 | **0.03** |
+| Time per photo (once, on upload) | - | 0.29 s median, 0.65 s worst (sandbox CPU) |
+
+Hardest cases (IoU below 0.9): a white-striped shirt on a white or light background (the soft shadow stays), vertical stripes on a
+checkerboard, a beige shirt on a beige gradient, a charcoal shirt on dark street clutter. A garment worn by a person in the photo
+is not separated from the person.
+
+**2. Garment placement and deformation (render/garmentwarp.js).** The photo is measured once (collar, shoulder width, armpits,
+sleeve directions, width per row) and cut into a 30 x 40 mesh. Every frame each mesh point is moved: the torso onto a turned
+cylinder whose width follows shoulders, waist and hips (half way between the garment's own width and the body's, so loose
+garments stay loose; below the hips the garment keeps its own shape), tilted with the shoulder line and bent along the torso
+axis; each sleeve turns with the upper arm and a long sleeve bends at the elbow; left/right body turn from the shoulders' depth.
+Synthetic poses (`test=outfitgeo`: arms down, out, up, akimbo, crossed, leaning, turned; two body sizes):
+
+| | Result |
+|---|---|
+| Sleeve direction vs upper arm | 1.8-3.6 deg (arms down, akimbo, crossed, lean, turned); 11 deg arms out; 17 deg arms up |
+| Garment shoulder vs outside of the body's shoulder | 0.06 shoulder widths (0.07 turned) |
+| Folded-over mesh area | 0-2% (worst: arms raised) |
+
+**3. Colours, light, occlusion (render/garmentgl.js).** Before, the camera picture was blended in with soft-light, which shifts the
+garment's colours and shows what you wear underneath. Now only brightness is applied: soft folds and shadows from the picture as a
+ratio (big brightness steps such as your own neckline or straps are left out), body curvature, room exposure and colour cast from
+the face light estimate. Above the hips the garment is kept inside the person mask; arms beyond the sleeve end are put back from
+the camera picture (cut to the person mask); face, jaw line and hair stay on top as before. Two real photos, 6 framings each
+(near, middle, far, shifted, tilted both ways; `test=outfit`):
+
+| | pose.jpg flat (before) | pose.jpg warp (new) | portrait.png flat | portrait.png warp |
+|---|---|---|---|---|
+| Garment outside the body outline, above the hips | 15.4% | **4.7%** | 16.1% | **2.7%** |
+| Forearm skin covered by the garment | 12.7% | **9.6%** | 12.8% | **3.4%** |
+| Colour change vs the garment photo (Lab chroma) | 4.8 | **2.2** | 5.6 | **3.2** |
+| Brightness change (Lab L) | -5.3 | -1.4 | -1.5 | -0.7 |
+| Draw time per frame (sandbox, software GPU) | 0.2 ms | 2.1 ms | 0.1 ms | 2.2 ms |
+
+Steadiness (a still person, camera noise, 30 frames, `test=outfitjitter`): outline change per frame 0.16% (flat) vs 0.16% (warp)
+on pose.jpg; 3.6% vs 1.5% on portrait.png (the warp needed extra smoothing of the turn angle, hips and elbows to get there; big
+moves are followed at once). Full studio with a fake camera (moving body video): warp renderer and person mask active, no errors.
+
+Remaining limits: not tested on a real phone or with a real person moving; one body photo and one portrait only (no standing
+full-body test photo in the sandbox); the "person mask" metric uses the same model's mask as the renderer; arms raised above the
+shoulders tear the sleeve seam a little; the turn angle comes from the pose model's depth, which is rough; garments are assumed to be
+tops/dresses photographed from the front (trousers are not mapped to legs); the person's own clothes can still show faintly
+through soft folds; the mirror view shows the garment photo as it is (a logo is not mirrored).
+
+## Update 15: Step 6 - jewellery and 3D accessories
+Changed: `src/tryon/jewellery.js` (neck anchor), `src/tryon/render/jewellery3d.js` (3D necklace, body turn), `src/tryon/track/head.js`
+(ear visibility only - face landmarks and head pose unchanged). Jewellery designs unchanged.
+
+**Earrings - why they cannot land on the cheek, nose or mouth:** each ear lobe is a separate fixed point on the fitted 3D head
+(right and left), moved only by the head's rotation, size and position; it is never taken from a face landmark. Measured on the
+3D test head with webcam-like jitter (`node tests/rig/jewel.mjs`): ear error 0.32-0.67 cm median per movement (turns, nods,
+tilts, moving closer/farther, light, body turns), 95th percentile 0.45-1.29 cm; still jitter 0.22 px per frame.
+
+**New: ear visibility along the camera's line of sight.** A head that is beside the middle of the picture is seen slightly from
+the side, so its far ear disappears earlier. Before, visibility only used the head's own turn. Test with the head moved toward
+the picture edges, up/down, and turned (`tests/rig/run.mjs "test=partial"`, 11 positions x 2 ears): earring shown exactly when the
+real lobe is visible in **20 of 22** cases (before: 17 of 22). Hidden earrings fade out (and in 3D the head hides them per pixel).
+
+**Necklace - neck anchor.** The body model's two shoulder points are often uneven, which shifted the necklace sideways by about
+2 cm even with a still head. The neck base now takes its sideways position halfway between the shoulders and the head's own
+neck estimate, and its height 3/4 from the shoulders (fitted and checked on the test head, `tests/rig/eval.mjs`):
+
+| | Before | After |
+|---|---|---|
+| Neck error, median (all movements) | 1.93 cm | **1.05 cm** |
+| Neck error, 95th percentile | 3.31 cm | 3.06 cm |
+| Still head | 2.07 cm | 0.97 cm |
+| Head turn (worst case) | 2.44 cm | 2.67 cm |
+| Necklace still jitter | - | 0.34 px per frame |
+
+**3D necklace (render/jewellery3d.js).** It is now a closed loop of beads AROUND the neck, front lower than the back, with an
+invisible neck (cylinder) in the depth buffer: the chain goes behind the neck instead of ending in mid-air at the sides, the chin
+still covers it when looking down (face mesh in the depth buffer), and it turns with the BODY (shoulder depth from the body
+model), not with the head. Earrings: unchanged design, hung from their lobe anchors, swinging, turning with the head, hidden by
+the head ellipsoid when the ear goes behind it. Lighting from the room light estimate, metal + gem materials, room reflections.
+
+Remaining limits: real ears differ by about +-1 cm between people (no ear landmarks exist); the necklace error is largest while
+the head turns (2.7 cm median) because neither the head nor the shoulders show the neck base directly; necklaces are drawn over
+clothing (a real necklace is worn over clothing too) but not tucked under a collar or hidden by long hair; no phone test.
+
+---
+
+## Update 14: Step 4 - hand and nail tracking
+Changed: new `src/tryon/track/hands.js` (hand tracking moved out of the studio and improved), `src/tryon/nails.js`
+(placement, hiding, rendering), `src/tryon/studio.js` (uses the new hand tracker). Face and hair code unchanged.
+
+**Model:** MediaPipe Hand Landmarker stays (21 points per hand in the picture + the same 21 points in 3D metres, left/right
+label, 2 hands, GPU in the browser, free). It is the standard free browser model; there is no free nail-segmentation model to add.
+
+**Test bench** (`tests/run.mjs "test=nailmotion&img=hand1.jpg"`): real hand photos moved with known transforms (side to side,
+up and down, wrist rotation +-29 deg, closer/farther 0.7x-1.3x) with camera noise, the real Hand Landmarker on every frame; the
+nails of the still picture, moved by the known transform, are the truth. Errors in nail lengths. Scenarios: normal, 15% missed
+frames, 20% of frames with the left/right label flipped, 3% wrong detections; three speeds.
+
+| Photo, scenario (normal speed) | Before: 95th % / worst | After: 95th % / worst | Nails flickering on/off |
+|---|---|---|---|
+| hand 1, normal | 0.16 / 0.23 | 0.16 / 0.23 | 0 -> 0 |
+| hand 1, missed frames | 0.27 / 0.54 | 0.18 / 0.42 | 0 -> 0 |
+| hand 1, left/right label flips | **1.09 / 3.32** | 0.17 / 0.25 | **20 -> 4** |
+| hand 1, wrong detections | 0.17 / **1.85** | 0.17 / 0.69 | 0 -> 0 |
+| hand 2, missed frames | 0.55 / 1.02 | 0.37 / 0.54 | |
+| hand 2, wrong detections | 0.37 / **4.69** | 0.35 / 1.98 | |
+| very fast moves (3x speed), all scenarios | | equal or better than before | |
+
+**Placement on the real nails** (hand photo, 4 nails marked by hand): average distance from the real nail centre 13.3 px
+(previous) -> **6.3 px** (at 720p); nail length and width closer to the real nails.
+
+What changed:
+1. **Hand identity by position**, left/right label voted over recent frames - a single wrong label no longer swaps nails
+   between hands or flips which side of the finger is the nail side.
+2. **Missed frames:** the hand keeps moving with its measured speed for up to 0.2 s.
+3. **Jump guard:** a detection far from where the hand can be is held for ONE frame; it is accepted as soon as the next frame
+   agrees (a real fast move), dropped if the next frame is back where the hand was expected. Faster hands get more room.
+4. **Nail placement:** nail plate moved toward the fingertip and runs slightly past the model's fingertip point (which sits
+   inside the fingertip); width 0.54 of the knuckle spacing.
+5. **Confidence-based hiding:** a nail is hidden when it faces away (3D), is seen edge-on, is cut by the picture edge, is covered
+   by another finger of the same hand that is nearer to the camera (fists, crossed fingers), or when the hand was seen in only
+   one frame.
+6. **Rendering:** nail-shaped mask (square, round, almond, coffin, stiletto) mapped with the finger's 3D orientation (perspective),
+   edges softened in proportion to the nail size on screen, curved-plate shading (side walls, cuticle line, lighter free edge),
+   gloss = soft broad shine + sharp core on the side facing the room light (light estimate), matte = no shine, the real nail's
+   light and shade blended in. Designs unchanged (solid, French, glitter, ombre, chrome).
+
+Remaining limits: the nail outline is still estimated from finger geometry (no nail-segmentation model), so long natural nails
+or very short nails are drawn at an average size; placement was checked on one photo with visible nails (curled fingers) - an open
+hand with the back facing the camera, the usual try-on pose, could not be tested with ground truth here; real phones not tested.
+
+---
+
+## Update 13: Step 3 - hair segmentation and hair colour
 Changed: `src/tryon/hair.js`, new `src/tryon/render/haircolor.js`, `src/tryon/render/masks.js` (head-connected hair only),
 `src/tryon/track/mediapipe.js` (hair model), `src/tryon/studio.js` (hair wiring only). Face tracking, makeup, nails, jewellery
 and outfits unchanged (makeup's hair occlusion uses the same mask, so it now uses the hair model too).

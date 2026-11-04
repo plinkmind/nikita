@@ -33,6 +33,12 @@ export const NAIL_IDS = new Set(NAILS.map((p) => p.id))
 
 // [dip, tip, width factor] per finger: thumb, index, middle, ring, little
 const FINGERS = [[3, 4, 1.22], [7, 8, 1.0], [11, 12, 1.04], [15, 16, 0.96], [19, 20, 0.8]]
+// Where the nail plate sits on the last finger bone (fractions from the last joint to the fingertip point) and how wide it is
+// (fraction of the knuckle spacing). Checked against the real nails of a hand photo (tests/harness.js "nails", 4 nails marked by
+// hand): the earlier values (0.36 -> 1.0, width 0.6) put the polish too far from the fingertip (13 px average from the real nail
+// centre at 720p) and ~15% too wide; these give 6 px. The fingertip point of the model sits inside the fingertip, so the nail
+// runs a little past it. (One photo: real nails differ from person to person.)
+const NAIL_FROM = 0.5, NAIL_TO = 1.16, NAIL_W = 0.54
 const EXTRA = { square: 0.06, round: 0.04, almond: 0.24, coffin: 0.22, stiletto: 0.4 } // free edge beyond the fingertip (nail lengths)
 
 const v3 = (p) => [p.x, p.y, p.z]
@@ -76,13 +82,25 @@ export function nailGeometry(hd) {
     n = norm(sub(n, u.map((v) => v * dot(n, u))))
     const across = norm(cross(n, u)) // nail width direction (3D)
     const facing = -n[2] // > 0: the nail faces the camera
-    const width = knuckle * 0.6 * wf
+    const width = knuckle * NAIL_W * wf
     const thick = knuckle * 0.08 // the nail sits on the top surface of the finger, above the bone line between the joints
     const lift = [n[0] * thick * s, n[1] * thick * s]
     const pd = P[d], pt = P[t]
     const at = (k) => ({ x: pd.x + (pt.x - pd.x) * k + lift[0], y: pd.y + (pt.y - pd.y) * k + lift[1] })
-    const base = at(0.36), tip = at(1.0)
-    return { f, base, along: { x: tip.x - base.x, y: tip.y - base.y }, across: { x: across[0] * width * s, y: across[1] * width * s }, facing, vis: smooth(0.12, 0.4, facing), Ld }
+    const base = at(NAIL_FROM), tip = at(NAIL_TO)
+    // the nail plate may be hidden by ANOTHER finger of the same hand that is nearer to the camera (a fist, crossed fingers)
+    const c = at((NAIL_FROM + NAIL_TO) / 2), nailZ = (P[d].z + P[t].z) / 2, rad = Math.hypot(across[0] * width * s, across[1] * width * s) * 0.9
+    let hidden = 0
+    for (let g = 0; g < 5; g++) {
+      if (g === f) continue
+      const ch2 = [0, ...chains[g]]
+      for (let k = 0; k < ch2.length - 1; k++) {
+        const a2 = P[ch2[k]], b2 = P[ch2[k + 1]], vx = b2.x - a2.x, vy = b2.y - a2.y, l2 = vx * vx + vy * vy || 1, u2 = Math.max(0, Math.min(1, ((c.x - a2.x) * vx + (c.y - a2.y) * vy) / l2))
+        const qx = a2.x + vx * u2, qy = a2.y + vy * u2, qz = a2.z + (b2.z - a2.z) * u2, dd = Math.hypot(c.x - qx, c.y - qy)
+        if (dd < rad && qz < nailZ - rad * 0.3) hidden = Math.max(hidden, 1 - smooth(rad * 0.5, rad, dd))
+      }
+    }
+    return { f, base, along: { x: tip.x - base.x, y: tip.y - base.y }, across: { x: across[0] * width * s, y: across[1] * width * s }, facing, vis: smooth(0.12, 0.4, facing) * (1 - hidden), hidden, Ld }
   })
 }
 
@@ -132,12 +150,16 @@ export function drawNails(c, hands, state, T, raw, mirror, light = null) { // li
   layer = canvasLike(c.canvas, layer); mask = canvasLike(c.canvas, mask)
   const Lx = layer.getContext('2d'), Mx = mask.getContext('2d')
   Lx.clearRect(0, 0, layer.width, layer.height); Mx.clearRect(0, 0, mask.width, mask.height)
-  let any = false
+  let any = false, wsum = 0, wn = 0
+  const Hh = c.canvas.height, inside = (p, m) => p.x > -m && p.y > -m && p.x < W + m && p.y < Hh + m
   hands.forEach((hd, hi) => {
+    if (hd.sure === false && st.show !== 'always') return // a hand seen in one frame only may be a false detection
     nailGeometry(hd).forEach((g) => {
       const len = Math.hypot(g.along.x, g.along.y), wid = Math.hypot(g.across.x, g.across.y); if (len < 3 || wid < 2) return
+      const tip = { x: g.base.x + g.along.x, y: g.base.y + g.along.y }; if (!inside(g.base, -2) || !inside(tip, -2)) return // nail cut by the picture edge: not clearly visible
       const edgeOn = smooth(0.32, 0.55, wid / len) // a nail seen almost edge-on is a thin sliver: fade it rather than draw a red line
-      const vis = (st.show === 'always' ? 1 : g.vis * edgeOn) * (hd.alpha ?? 1); if (vis < 0.02) return
+      const vis = (st.show === 'always' ? 1 - (g.hidden || 0) : g.vis * edgeOn) * (hd.alpha ?? 1); if (vis < 0.02) return
+      wsum += wid; wn++
       any = true
       // camera pixels -> what is shown (mirrored for the selfie view)
       const ox = mirror ? W - g.base.x : g.base.x, ax = mirror ? -g.across.x : g.across.x, yx = mirror ? -g.along.x : g.along.x
@@ -148,13 +170,21 @@ export function drawNails(c, hands, state, T, raw, mirror, light = null) { // li
         if (!paint) { ctx.fillStyle = '#fff'; ctx.fill() }
         else {
           ctx.save(); ctx.clip(); design(ctx, id, col, L, hi * 7 + g.f + 1, T)
-          if (st.finish === 'gloss') { // specular streak along the curved nail + darker side walls (the nail is a curved plate)
-            // the shine sits on the side of the curved nail that faces the light: shift it across the nail by the light direction
-            const al = Math.hypot(ax, g.across.y) || 1, sh = light ? Math.max(-0.25, Math.min(0.25, ((light.dir.x * ax + light.dir.y * g.across.y) / al) * 0.3)) : 0
-            const hl = ctx.createLinearGradient(-0.5 + sh, 0, 0.5 + sh, 0)
-            hl.addColorStop(0, 'rgba(0,0,0,.22)'); hl.addColorStop(0.18, 'rgba(0,0,0,0)'); hl.addColorStop(0.3, 'rgba(255,255,255,.0)'); hl.addColorStop(0.36, 'rgba(255,255,255,.5)'); hl.addColorStop(0.44, 'rgba(255,255,255,0)'); hl.addColorStop(0.82, 'rgba(0,0,0,0)'); hl.addColorStop(1, 'rgba(0,0,0,.25)')
-            ctx.fillStyle = hl; ctx.fillRect(-0.5, 0.1, 1, L - 0.2)
-          } else { const sd = ctx.createLinearGradient(-0.5, 0, 0.5, 0); sd.addColorStop(0, 'rgba(0,0,0,.18)'); sd.addColorStop(0.25, 'rgba(0,0,0,0)'); sd.addColorStop(0.75, 'rgba(0,0,0,0)'); sd.addColorStop(1, 'rgba(0,0,0,.2)'); ctx.fillStyle = sd; ctx.fillRect(-0.5, 0, 1, L) }
+          // the nail is a curved plate: both side walls a little darker, a soft darker line at the cuticle, the free edge slightly
+          // lighter (polish is thinner there)
+          const side = ctx.createLinearGradient(-0.5, 0, 0.5, 0)
+          side.addColorStop(0, 'rgba(0,0,0,.30)'); side.addColorStop(0.16, 'rgba(0,0,0,.07)'); side.addColorStop(0.5, 'rgba(0,0,0,0)'); side.addColorStop(0.84, 'rgba(0,0,0,.07)'); side.addColorStop(1, 'rgba(0,0,0,.30)')
+          ctx.fillStyle = side; ctx.fillRect(-0.6, -0.1, 1.2, L + 0.2)
+          const lon = ctx.createLinearGradient(0, 0, 0, L)
+          lon.addColorStop(0, 'rgba(0,0,0,.28)'); lon.addColorStop(0.1, 'rgba(0,0,0,0)'); lon.addColorStop(0.86, 'rgba(255,255,255,0)'); lon.addColorStop(1, 'rgba(255,255,255,.14)')
+          ctx.fillStyle = lon; ctx.fillRect(-0.6, -0.1, 1.2, L + 0.2)
+          if (st.finish === 'gloss') {
+            // shine: a soft broad band plus a sharp core, on the side of the curved nail that faces the light (light estimate),
+            // fading toward the cuticle and the free edge
+            const al = Math.hypot(ax, g.across.y) || 1, sh = light ? Math.max(-0.22, Math.min(0.22, ((light.dir.x * ax + light.dir.y * g.across.y) / al) * 0.3)) : -0.12
+            const band = (w2, a2) => { const hl = ctx.createLinearGradient(sh - w2, 0, sh + w2, 0); hl.addColorStop(0, 'rgba(255,255,255,0)'); hl.addColorStop(0.5, `rgba(255,255,255,${a2})`); hl.addColorStop(1, 'rgba(255,255,255,0)'); return hl }
+            for (const [w2, a2, y0, y1] of [[0.2, 0.32, 0.12, 0.88], [0.045, 0.75, 0.2, 0.72]]) { ctx.fillStyle = band(w2, a2); ctx.fillRect(sh - w2, L * y0, w2 * 2, L * (y1 - y0)) }
+          }
           ctx.restore()
         }
         ctx.restore()
@@ -165,6 +195,8 @@ export function drawNails(c, hands, state, T, raw, mirror, light = null) { // li
   // real light and shade of the finger, blended into the polish (keeps it looking like it sits on the nail)
   if (raw) { Lx.save(); Lx.globalCompositeOperation = 'soft-light'; Lx.globalAlpha = 0.55; Lx.drawImage(raw, 0, 0); Lx.restore() }
   // keep only what is inside the (slightly feathered) nail mask: no spill onto the skin
-  Lx.save(); Lx.globalCompositeOperation = 'destination-in'; Lx.filter = 'blur(0.6px)'; Lx.drawImage(mask, 0, 0); Lx.filter = 'none'; Lx.restore()
+  // edge softness follows the nail size on screen (a hand near the camera gets a wider soft edge than one far away)
+  const fe = Math.max(0.5, Math.min(2.5, (wsum / (wn || 1)) * 0.05))
+  Lx.save(); Lx.globalCompositeOperation = 'destination-in'; Lx.filter = `blur(${fe.toFixed(2)}px)`; Lx.drawImage(mask, 0, 0); Lx.filter = 'none'; Lx.restore()
   c.save(); c.globalAlpha = 0.55 + 0.45 * st.v; c.drawImage(layer, 0, 0); c.restore()
 }

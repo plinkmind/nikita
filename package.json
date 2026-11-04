@@ -14,7 +14,8 @@
     "test": "npm run test:backend",
     "test:backend": "node --test tests/backend/api.test.mjs tests/backend/netlify-bundle.test.mjs",
     "test:tracking": "node tests/rig/tune.mjs",
-    "test:face": "node tests/rig/face.mjs"
+    "test:face": "node tests/rig/face.mjs",
+    "test:outfit": "node tests/run.mjs test=outfit && node tests/run.mjs test=garment && node tests/run.mjs test=outfitgeo"
   },
   "dependencies": {
     "@gradio/client": "^1.19.1",

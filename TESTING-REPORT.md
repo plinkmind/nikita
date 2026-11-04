@@ -1,5 +1,45 @@
 # Testing report
 
+## Update 16: body tracking and outfit try-on
+
+| Test | Result |
+|---|---|
+| `tests/run.mjs "test=garment"`: 48 synthetic garment photos, plain and busy backgrounds, true outline known | cut-out IoU median 0.82 -> 0.99 (plain), 0.27 -> 0.99 (busy); worst 0.75 (busy) |
+| `tests/run.mjs "test=outfitgeo"`: synthetic poses (arms down/out/up/akimbo/crossed, lean, turn), 2 sizes | sleeve follows the arm within 2-4 deg (11/17 deg arms out/up); folded area <= 2% |
+| `tests/run.mjs "test=outfit&img=pose.jpg"` and `img=portrait.png`: 6 framings each, flat vs warp | spill outside body 15-16% -> 3-5%; forearms covered 13% -> 3-10%; colour change 4.8-5.6 -> 2.2-3.2 |
+| `tests/run.mjs "test=outfitjitter"`: still person, camera noise | warp as steady as flat (pose.jpg), steadier on portrait.png |
+| `tests/run.mjs "test=posecost"`: pose model with / without person mask | 50 -> 56 ms median (CPU sandbox) |
+| `tests/e2e.mjs` fake camera (moving body video) + garment photo | warp renderer + person mask active, no errors |
+| Full studio category test / backend suite | pass, no site errors / 55 of 55 |
+| Not tested | real phone, real person, standing full-body photo, real garment product photos |
+
+---
+
+## Update 15: jewellery and 3D accessories
+
+| Test | Result |
+|---|---|
+| `node tests/rig/jewel.mjs` (test head, webcam-like jitter): ear and neck anchors per movement, still jitter | ears 0.32-0.67 cm median; neck 1.93 -> 1.05 cm median overall; jitter 0.22 px (ears), 0.34 px (necklace) |
+| `tests/rig/run.mjs "test=partial"`: head near the picture edges, up/down, turned | earring shown exactly when the real lobe is visible in 20/22 cases (was 17/22) |
+| 3D jhumkas + 3D necklace at 6 poses (`test=look`) | necklace wraps the neck, back hidden; far earring hidden by the head |
+| Full studio category test incl. 3D jewellery | pass, no console errors from the site |
+| Face bench / backend suite | unchanged / 55 of 55 |
+
+---
+
+## Update 14: hand and nail tracking
+
+| Test | Result |
+|---|---|
+| `tests/run.mjs "test=nailmotion"` on two real hand photos, 3 speeds x 4 scenarios (normal, missed frames, label flips, wrong detections) | equal or better in every case; label flips 1.09 -> 0.17 nail lengths (95th %), wrong detections worst case 4.69 -> 1.98 |
+| Nail centres vs real nails marked on a photo | 13.3 -> 6.3 px average |
+| Full studio, moving + turning hand video, mirrored view, red polish | nails stay on the nails, no console errors from the site |
+| Backend suite | 55/55 |
+
+**Not tested:** an open hand with the back to the camera with ground truth, real nail shapes of different people, phones.
+
+---
+
 ## Update 13: hair segmentation and hair colour
 
 | Test | Result |

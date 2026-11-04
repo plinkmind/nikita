@@ -1,5 +1,8 @@
-// Live outfit = YOUR OWN GARMENT PHOTO placed on your body. The real fabric, print and colours of the photo are kept, but it is NOT bent around
-// your body and it is NOT an AI try-on. (The flat drawn garments were removed: they looked cartoonish.) For a realistic result use "AI Photo".
+// Live outfit = YOUR OWN GARMENT PHOTO placed on your body. The real fabric, print and colours of the photo are kept; it is bent onto a simple
+// body shape (see drawOutfit) but it is NOT a cloth simulation and NOT an AI try-on. (The flat drawn garments were removed: they looked cartoonish.) For a realistic result use "AI Photo".
+import { cutBusy, refine, tidy, closeGaps } from './garmentcut.js'
+import { garmentGeo, garmentMesh, bodyPose, warpMesh } from './render/garmentwarp.js'
+import { createGarmentGL } from './render/garmentgl.js'
 const sh = (n, c) => ({ n, c })
 export const OUTFITS = [
   { id: 'o-custom', label: 'My clothing photo', v: 0.5, shades: [sh('As uploaded', '#ffffff')], need: 'pose', excl: 'custom', upload: true,
@@ -41,20 +44,63 @@ function drawCustom(c, B, st, img) {
   c.restore()
 }
 
-// The garment is drawn on its own layer, then (1) the real light and fold shading of your body is blended into it (soft-light),
-// so it does not look like a flat sticker, and (2) forearms and hands that are IN FRONT of the body (closer to the camera than
-// the shoulders, from the body model's depth) are put back on top, so the garment does not cover an arm crossing the chest.
-let layer = null, gmask = null
-export function drawOutfit(c, B, state, customImg, T, raw, pose, M) {
+// Two ways to draw the garment (both keep the photo's own design, print and colours):
+//  - WARP (default, WebGL): the photo is cut into a mesh and bent onto the body (render/garmentwarp.js): torso on a turned body
+//    shape that follows shoulders, waist and hips; sleeves bound to the arms. Light: only brightness changes from your folds, body
+//    curvature and room light (render/garmentgl.js). Above the hips it is kept inside your body outline (person mask).
+//  - FLAT (fallback without WebGL, or ?warp=0): the photo stretched over the shoulder line and torso in slices, with the camera
+//    picture's light blended in (soft-light).
+// Then: the face and everything above the jaw line is never covered; your arms are put back over the garment beyond its sleeves.
+// Neither is a cloth simulation: no drape, gravity or wrinkles of the garment's own.
+let layer = null, gmask = null, gl = undefined
+const geoCache = new WeakMap()
+const WARP = typeof location === 'undefined' || new URLSearchParams(location.search).get('warp') !== '0'
+function geoOf(img) {
+  if (geoCache.has(img)) return geoCache.get(img)
+  let g = null
+  try {
+    const d = img.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, img.width, img.height).data, a = new Uint8Array(img.width * img.height)
+    for (let o = 0; o < a.length; o++) a[o] = d[o * 4 + 3]
+    const geo = garmentGeo(a, img.width, img.height); if (geo) g = { geo, mesh: garmentMesh(geo, a) }
+  } catch { g = null }
+  geoCache.set(img, g); return g
+}
+// extra steadiness for the points only the warp uses (the pose model's depth, hips, elbows and wrists are noisier than the
+// shoulders): the turn angle is smoothed strongly and ignores changes under 3 degrees; hips, elbows and wrists are smoothed a
+// little, and follow at once when they move a lot (a real movement)
+let sb = null
+function steady(b, sw) {
+  const mv = (p, q, k) => { const d = Math.hypot(p.x - q.x, p.y - q.y) / sw, a = d > 0.25 ? 1 : k; return { ...p, x: q.x + (p.x - q.x) * a, y: q.y + (p.y - q.y) * a } }
+  if (!sb || Math.abs(sb.sw - sw) > sw * 0.3) { sb = { ...b, sw }; return b }
+  const dy = b.yaw - sb.yaw, yaw = Math.abs(dy) < 0.05 ? sb.yaw : sb.yaw + dy * 0.15
+  const arm = (a, o) => ({ ...a, E: mv(a.E, o.E, 0.5), W: mv(a.W, o.W, 0.5) })
+  sb = { ...b, yaw, hl: mv(b.hl, sb.hl, 0.35), hr: mv(b.hr, sb.hr, 0.35), aL: arm(b.aL, sb.aL), aR: arm(b.aR, sb.aR), sw }
+  return sb
+}
+export function resetOutfit() { sb = null }
+export { geoOf as garmentGeometry }
+export function outfitRenderer() { return gl ? 'warp' : gl === null ? 'flat' : 'none' }
+// o: { person: { canvas, off } | null (body outline from the pose model), light (light.js value) | null }
+export function drawOutfit(c, B, state, customImg, T, raw, pose, M, o = {}) {
   if (!B || !state['o-custom'] || !customImg) return
   layer = layer || document.createElement('canvas'); if (layer.width !== c.canvas.width || layer.height !== c.canvas.height) { layer.width = c.canvas.width; layer.height = c.canvas.height }
   const L = layer.getContext('2d'); L.clearRect(0, 0, layer.width, layer.height)
-  drawCustom(L, B, state['o-custom'], customImg)
-  if (raw) {
-    // your real light and fold shading, blended into the garment's own colours (soft-light), then cut back to the garment shape
-    gmask = gmask || document.createElement('canvas'); if (gmask.width !== layer.width || gmask.height !== layer.height) { gmask.width = layer.width; gmask.height = layer.height }
-    const G = gmask.getContext('2d'); G.clearRect(0, 0, gmask.width, gmask.height); G.drawImage(layer, 0, 0)
-    L.save(); L.globalCompositeOperation = 'soft-light'; L.globalAlpha = 0.45; L.drawImage(raw, 0, 0); L.globalAlpha = 1; L.globalCompositeOperation = 'destination-in'; L.drawImage(gmask, 0, 0); L.restore()
+  const G = WARP && !o.flat && pose && raw ? geoOf(customImg) : null
+  if (G && gl === undefined) gl = createGarmentGL()
+  let arms = null
+  if (G && gl) {
+    const body = steady(bodyPose(pose, B), B.sw), Wp = warpMesh(G.geo, G.mesh, body, state['o-custom'])
+    const out = gl.render(layer.width, layer.height, customImg, G.mesh, Wp, raw, o.person || null, { light: o.light, sw: B.sw })
+    if (out) { L.drawImage(out, 0, 0); arms = { body, k: Wp.k, geo: G.geo } }
+  }
+  if (!arms) {
+    drawCustom(L, B, state['o-custom'], customImg)
+    if (raw) {
+      // your real light and fold shading, blended into the garment's own colours (soft-light), then cut back to the garment shape
+      gmask = gmask || document.createElement('canvas'); if (gmask.width !== layer.width || gmask.height !== layer.height) { gmask.width = layer.width; gmask.height = layer.height }
+      const Gm = gmask.getContext('2d'); Gm.clearRect(0, 0, gmask.width, gmask.height); Gm.drawImage(layer, 0, 0)
+      L.save(); L.globalCompositeOperation = 'soft-light'; L.globalAlpha = 0.45; L.drawImage(raw, 0, 0); L.globalAlpha = 1; L.globalCompositeOperation = 'destination-in'; L.drawImage(gmask, 0, 0); L.restore()
+    }
   }
   // a garment can never cover the face or anything above the jaw line (protects against a wrong body reading)
   if (M) {
@@ -64,27 +110,42 @@ export function drawOutfit(c, B, state, customImg, T, raw, pose, M) {
     jaw.forEach((q) => L.lineTo(q.x, q.y)); L.lineTo(jaw[jaw.length - 1].x - ux, jaw[jaw.length - 1].y - uy); L.closePath(); L.fill(); L.restore()
   }
   c.drawImage(layer, 0, 0)
-  if (raw && pose) {
-    const sz = (pose[11].z + pose[12].z) / 2
-    ;[[13, 15, 19], [14, 16, 20]].forEach(([e, w, hi]) => { // elbow -> wrist -> hand
-      const E = pose[e], Wr = pose[w], Hd = pose[hi]
-      if (!(E.v > 0.5 && Wr.v > 0.5) || Wr.z > sz - B.sw * 0.15) return // only forearms clearly in front of the shoulders
-      const path = new Path2D(); path.moveTo(E.x, E.y); path.lineTo(Wr.x, Wr.y); if (Hd.v > 0.3) path.lineTo(Hd.x, Hd.y)
-      c.drawImage(armMask(c.canvas, path, B.sw * 0.2, raw), 0, 0)
+  if (!raw || !pose) return
+  if (arms) {
+    // your arms in front of the garment: everything of the arm beyond the end of the sleeve (or beyond the shoulder, sleeveless)
+    // is the real camera picture, cut to the arm (and to your body outline when the person mask is there)
+    const { body, k, geo } = arms
+    ;[[body.aL, geo.sl], [body.aR, geo.sr]].forEach(([a, sg]) => {
+      if (!a.seen) return
+      const Lu = Math.hypot(a.E.x - a.S.x, a.E.y - a.S.y), Lf = Math.hypot(a.W.x - a.E.x, a.W.y - a.E.y)
+      const d0 = sg ? sg.len * k + B.sw * 0.04 : B.sw * 0.18 // distance along the arm where the garment ends
+      const at = (d) => (d <= Lu ? { x: a.S.x + (a.E.x - a.S.x) * d / Lu, y: a.S.y + (a.E.y - a.S.y) * d / Lu } : { x: a.E.x + (a.W.x - a.E.x) * Math.min(1.25, (d - Lu) / Lf), y: a.E.y + (a.W.y - a.E.y) * Math.min(1.25, (d - Lu) / Lf) })
+      if (d0 > Lu + Lf * 1.2) return // long sleeve: the whole arm is covered
+      const path = new Path2D(), p0 = at(d0); path.moveTo(p0.x, p0.y); if (d0 < Lu) path.lineTo(a.E.x, a.E.y); const pe = at(Lu + Lf * 1.25); path.lineTo(pe.x, pe.y)
+      c.drawImage(armMask(c.canvas, path, B.sw * (o.person ? 0.34 : 0.22), raw, o.person), 0, 0)
     })
+    return
   }
+  const sz = (pose[11].z + pose[12].z) / 2
+  ;[[13, 15, 19], [14, 16, 20]].forEach(([e, w, hi]) => { // elbow -> wrist -> hand
+    const E = pose[e], Wr = pose[w], Hd = pose[hi]
+    if (!(E.v > 0.5 && Wr.v > 0.5) || Wr.z > sz - B.sw * 0.15) return // only forearms clearly in front of the shoulders
+    const path = new Path2D(); path.moveTo(E.x, E.y); path.lineTo(Wr.x, Wr.y); if (Hd.v > 0.3) path.lineTo(Hd.x, Hd.y)
+    c.drawImage(armMask(c.canvas, path, B.sw * 0.2, raw), 0, 0)
+  })
 }
 let am = null
-function armMask(ref, path, width, raw) { // the real camera picture, cut to a thick rounded stroke along the forearm
+function armMask(ref, path, width, raw, person) { // the real camera picture, cut to a thick rounded stroke along the arm (and the body outline)
   am = am || document.createElement('canvas'); if (am.width !== ref.width || am.height !== ref.height) { am.width = ref.width; am.height = ref.height }
   const x = am.getContext('2d'); x.clearRect(0, 0, am.width, am.height)
   x.lineCap = 'round'; x.lineJoin = 'round'; x.lineWidth = width; x.strokeStyle = '#000'; x.stroke(path)
+  if (person) { x.globalCompositeOperation = 'destination-in'; x.drawImage(person.canvas, person.off?.x || 0, person.off?.y || 0, am.width, am.height) }
   x.globalCompositeOperation = 'source-in'; x.drawImage(raw, 0, 0); x.globalCompositeOperation = 'source-over'
   return am
 }
 
-// ---- clothing photo preparation: size limit, plain-background removal, trim ----
-export function prepGarment(img) {
+// ---- clothing photo preparation: size limit, background removal (plain: flood fill; busy: colour models, garmentcut.js), trim ----
+export function prepGarment(img, opts = {}) {
   const k = Math.min(1, 900 / Math.max(img.width, img.height)), w0 = Math.max(1, Math.round(img.width * k)), h0 = Math.max(1, Math.round(img.height * k))
   const c0 = document.createElement('canvas'); c0.width = w0; c0.height = h0
   const x0c = c0.getContext('2d', { willReadFrequently: true }); x0c.drawImage(img, 0, 0, w0, h0)
@@ -104,7 +165,8 @@ export function prepGarment(img) {
   const far2 = border.filter((o) => d1(o, bg) >= 45), bg2 = far2.length > border.length * 0.2 ? [0, 1, 2].map((ch) => { const v = far2.map((o) => px[o + ch]).sort((p, q) => p - q); return v[v.length >> 1] }) : null
   const colourless = (c) => Math.max(...c) - Math.min(...c) < 25
   const dist = (o) => (bg2 && colourless(bg) && colourless(bg2) ? Math.min(d1(o, bg), d1(o, bg2)) : d1(o, bg))
-  const near = border.map(dist).filter((v) => v < 45), plain = near.length / border.length > 0.6 && border.every((o) => px[o + 3] > 200)
+  const opaque = border.every((o) => px[o + 3] > 200) // (a photo that already has a transparent background is left alone)
+  const near = border.map(dist).filter((v) => v < 45), plain = near.length / border.length > 0.6 && opaque
   // tolerance follows how uniform the background really is: a clean white studio background gets a tight tolerance (so a white
   // garment is not eaten into), a two-tone checkerboard or a slightly uneven backdrop gets a looser one
   const spread = near.length ? Math.sqrt(near.reduce((q, v) => q + v * v, 0) / near.length) : 0, tol = Math.max(14, Math.min(46, spread * 2.5 + 10))
@@ -134,11 +196,46 @@ export function prepGarment(img) {
       x.putImageData(d, 0, 0)
     }
   }
+  let mode = removed ? 'plain' : null
+  // the colour-model cut (garmentcut.js) runs on every opaque photo. It is used when the flood fill found no plain background, and also
+  // when the flood fill's result still holds a lot of what the colour models call clearly background (wood planks, sheet folds, a
+  // checkerboard in shadow: the fill stops at every line in them). Otherwise the flood fill's result stays: on a truly plain background
+  // it follows the garment's own outline best (a white stripe on a white background is not something colours alone can separate).
+  const cut = opts.busy !== false && opaque ? cutBusy(px, w, h) : null
+  // When both ran, the two are MERGED on the small working grid: the flood fill's result, minus what the colour models call clearly
+  // background (a shadow, wood planks, the folds of a sheet: the fill stops at every line in them), plus what they call clearly
+  // garment and the fill removed (a beige shirt on a beige wall). Where the merge changed nothing, the flood fill's own full-size edge
+  // is kept (on a plain background it follows the outline best: a white stripe on a white background is not something colours can
+  // separate); where it changed something, the edge comes from the photo (guided filter).
+  let changed = 0, bgLeft = 0
+  if (cut && removed) { // how much of what the flood fill kept is clearly background? (far too much: the fill failed, use the colour cut alone)
+    let n = 0, cnt = 0
+    for (let J = 0; J < cut.H; J++) for (let I = 0; I < cut.W; I++) { const o = J * cut.W + I, kept = px[(Math.min(h - 1, Math.round((J + 0.5) * h / cut.H - 0.5)) * w + Math.min(w - 1, Math.round((I + 0.5) * w / cut.W - 0.5))) * 4 + 3] > 127; if (cut.L[o]) cnt++; else if (kept && cut.D[o] < -2) n++ }
+    bgLeft = cnt ? n / cnt : 0
+  }
+  if (cut && removed && bgLeft < 0.25) {
+    const { W: CW, H: CH, L: CL, D: CD } = cut, M = new Uint8Array(CW * CH), at = (I, J) => (Math.min(h - 1, Math.round((J + 0.5) * h / CH - 0.5)) * w + Math.min(w - 1, Math.round((I + 0.5) * w / CW - 0.5))) * 4 + 3
+    for (let J = 0; J < CH; J++) for (let I = 0; I < CW; I++) { const o = J * CW + I, kept = px[at(I, J)] > 127; M[o] = (kept && !(!CL[o] && CD[o] < -2)) || (CL[o] && CD[o] > 2) ? 1 : 0 }
+    // a white stripe of a striped shirt on a light background looks like background to the colour models: a short gap between two
+    // garment parts that the flood fill had kept stays garment
+    const P = new Uint8Array(CW * CH); for (let J = 0; J < CH; J++) for (let I = 0; I < CW; I++) P[J * CW + I] = px[at(I, J)] > 127 ? 1 : 0
+    closeGaps(M, CD, CW, CH, (o) => P[o])
+    tidy(M, CW, CH)
+    const diff = new Uint8Array(CW * CH); for (let J = 0; J < CH; J++) for (let I = 0; I < CW; I++) { const o = J * CW + I; if (M[o] !== (px[at(I, J)] > 127 ? 1 : 0)) { changed++; for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) { const II = I + di, JJ = J + dj; if (II >= 0 && JJ >= 0 && II < CW && JJ < CH) diff[JJ * CW + II] = 1 } } }
+    if (changed > CW * CH * 0.003) {
+      const A = refine(px, w, h, M, CW, CH)
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) { const I = Math.min(CW - 1, (i * CW / w) | 0), J = Math.min(CH - 1, (j * CH / h) | 0); if (diff[J * CW + I]) px[(j * w + i) * 4 + 3] = A[j * w + i] }
+      removed = 0; for (let o = 0; o < w * h; o++) if (!px[o * 4 + 3]) removed++
+      x.putImageData(d, 0, 0); mode = 'plain+busy'
+    }
+    changed /= CW * CH
+  } else if (cut) { removed = 0; for (let o = 0; o < w * h; o++) { px[o * 4 + 3] = cut.alpha[o]; if (!cut.alpha[o]) removed++ } x.putImageData(d, 0, 0); mode = 'busy' }
   // 3. trim empty edges
   let a0 = w, b0 = h, a1 = 0, b1 = 0
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (px[idx(i, j) + 3] > 20) { if (i < a0) a0 = i; if (i > a1) a1 = i; if (j < b0) b0 = j; if (j > b1) b1 = j }
-  if (a1 <= a0 || b1 <= b0) return { canvas: cv, cleaned: false }
+  if (a1 <= a0 || b1 <= b0) return { canvas: cv, cleaned: false, mode: null }
   const out = document.createElement('canvas'); out.width = a1 - a0 + 1; out.height = b1 - b0 + 1
+  out.box = { x: (l + a0) / k, y: (t + b0) / k, w: out.width / k, h: out.height / k } // where the cut-out sits in the original photo
   out.getContext('2d').drawImage(cv, a0, b0, out.width, out.height, 0, 0, out.width, out.height)
   // 4. measure the garment's top (first row at least 30% as wide as the garment: skips a hanger or a hook above it) and its
   //    shoulder width a little below that, for sizing on the body
@@ -150,5 +247,5 @@ export function prepGarment(img) {
     out.shoulderFrac = [sh - 2, sh, sh + 2].map(rowWidth).sort((p, q) => p - q)[1] / out.width
     out.collarFrac = top0 / out.height
   }
-  return { canvas: out, cleaned: removed > 0 }
+  return { canvas: out, cleaned: removed > 0, mode, diag: { spread: +spread.toFixed(1), near: +(near.length / border.length).toFixed(2), changed: +changed.toFixed(3), bgLeft: +bgLeft.toFixed(3) } }
 }

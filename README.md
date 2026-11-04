@@ -332,3 +332,14 @@ Full audit and measurements: `TRACKING-AUDIT.md`, `TESTING-REPORT.md`.
 - **Phone report for Phase 6:** open `https://glamifyxr.netlify.app/?debug`, start Try It On, apply makeup + earrings, and send
   a screenshot of the PHONE REPORT line (frame time and GPU). That decides whether the AI models move to a background worker.
 - Turn things off to compare: `?occ=0` (no hair/hand occlusion), `?mesh=0` (2D makeup).
+
+
+## R. Update 16: live outfit preview and garment photos
+
+- **Clothing photos on any background:** a shirt photographed on a bed, a floor or outdoors now gets its background removed too.
+  A plain background still works best. The note under the upload says when the background was not plain ("check the edges").
+- **The live outfit now follows your body:** sleeves turn with your arms, the shirt narrows at the waist, tilts and turns with
+  you, stays inside your body outline, and your arms show in front of it. The garment's own colours and print are kept.
+- **Honest limit:** this is still your 2D photo bent onto a simple body shape, not a 3D garment simulation. For a realistic
+  picture of you wearing it, use **See It On You** (the AI photo try-on, unchanged).
+- Compare with the old flat version: add `?warp=0` to the address.

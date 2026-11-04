@@ -1,3 +1,24 @@
+# Update 16: body tracking and outfit try-on (Step 7)
+Garment photos on busy backgrounds are now cut out (colour models + graph cut, merged with the plain-background method); the live
+outfit is bent onto the body (torso follows shoulders, waist, hips and body turn; sleeves follow the arms), keeps the garment's
+own colours (only light changes are applied), stays inside the body outline from the pose model's new person mask, and arms are
+drawn in front of it. Still a 2D warp, not a cloth simulation; the AI photo try-on is unchanged. Details: `TRACKING-AUDIT.md` Update 16.
+
+---
+
+# Update 15: jewellery and 3D accessories (Step 6)
+Neck anchor fixed (shoulder points no longer pull the necklace sideways), ear visibility along the camera's line of sight, 3D
+necklace as a loop around the neck with an invisible neck hiding its back, turning with the body. Details: `TRACKING-AUDIT.md` Update 15.
+
+---
+
+# Update 14: hand and nail tracking (Step 4)
+Hand tracking module (identity by position, voted left/right, missed-frame prediction, jump guard), nails moved onto the real
+nail plates, hidden when covered by another finger or cut by the picture edge, curved-plate shading and light-aware shine.
+Details: `TRACKING-AUDIT.md` Update 14.
+
+---
+
 # Update 13: hair segmentation and hair colour (Step 3)
 Hair Segmenter model (sharper, 20x smaller download), only head-connected hair, mask moved with head turns, eyes/brows/lips and
 forehead protected, segmenter reads the drawn frame, GPU recolouring that keeps the real strands and shine. Hairstyles stay
