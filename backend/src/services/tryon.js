@@ -25,6 +25,7 @@ const MESSAGES = {
   provider_rejected: 'The AI service could not accept these photos. Please try different photos.',
   provider_timeout: 'The AI service did not answer in time. Please try again.',
   provider_unreachable: 'The AI service cannot be reached right now. Please try again later.',
+  provider_not_found: 'The AI model is not available on the AI service (it may have been renamed). The site owner needs to check the model setting.',
   provider_empty: 'The AI service finished without an image. Please try again.',
   provider_bad_image: 'The AI service returned something that is not an image.',
   pose: 'The AI could not find a body pose in your photo. Use a clear, front-facing photo showing your upper body.',
@@ -55,8 +56,9 @@ export function tryonService({ TryOn, RateLimit }, storage, cfg) {
   async function dropInputs(job) {
     for (const kind of INPUT_KINDS) if (job.inputs?.[kind]) { await files.delete(fileKey(job.owner, job.id, kind)); delete job.inputs[kind] }
   }
-  async function fail(job, code) {
-    job.status = 'failed'; job.stage = 'failed'; job.error = { code, message: messageFor(code) }; job.completedAt = new Date().toISOString()
+  // detail: the AI provider's own short reason (e.g. "insufficient credit", "invalid input"), shown below the message
+  async function fail(job, code, detail) {
+    job.status = 'failed'; job.stage = 'failed'; job.error = { code, message: messageFor(code), ...(detail ? { detail: String(detail).slice(0, 200) } : {}) }; job.completedAt = new Date().toISOString()
     await dropInputs(job); return TryOn.save(job)
   }
   async function succeed(job, bytes) {
@@ -182,7 +184,7 @@ export function tryonService({ TryOn, RateLimit }, storage, cfg) {
     },
 
     // shared with the makeover service (services/makeover.js)
-    failJob: (job, code) => fail(job, code),
+    failJob: (job, code, detail) => fail(job, code, detail),
     succeedJob: (job, bytes) => succeed(job, bytes),
 
     async removeJob(job) {

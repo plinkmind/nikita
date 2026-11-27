@@ -24,6 +24,7 @@ export const ROUTES = [
   // AI Photo Makeover (history, image and delete use the try-on routes above: ?type=makeover)
   ['POST', '/api/makeover/generate', MK.generate],
   ['GET', '/api/makeover/status/:id', MK.status],
+  ['GET', '/api/makeover/check', MK.check],
 ]
 
 const compiled = ROUTES.map(([method, path, handler]) => {

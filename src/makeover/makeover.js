@@ -117,19 +117,43 @@ export function initMakeover(hooks = {}) {
   root.className = 'at mk'; root.hidden = true; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'AI Photo Makeover')
   root.innerHTML = TEMPLATE; document.body.appendChild(root)
   const $ = (s) => root.querySelector(s), form = $('.mk-form'), slot = (n) => root.querySelector(`[data-slot="${n}"]`)
-  const S = { person: null, garment: null, occasion: '', setup: null, health: null, job: null, result: null, resultBlob: null, resultJob: null, history: null, guestHours: 24, avoid: '' }
+  const S = { check: null, person: null, garment: null, occasion: '', setup: null, health: null, job: null, result: null, resultBlob: null, resultJob: null, history: null, guestHours: 24, avoid: '' }
   let timer = 0, ctl = null, opener = null, histUrls = []
 
   const status = (html, kind = 'info') => { const el = $('.at-status'); el.innerHTML = html || ''; el.className = 'at-status ' + kind; el.hidden = !html }
+  // Status: 1) is the Glamify server there, 2) is the key set, 3) does Replicate accept the key and are the models available
+  // (a live check on the server: GET /api/makeover/check, nothing is generated). "Check again" runs all three again; with
+  // `npm run dev` the server re-reads .env by itself, so a key added to .env works without a restart.
+  const LOCAL = /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|\[::1\])/.test(location.hostname)
+  const again = '<button type="button" data-mk="recheck">Check again</button>'
+  function problem(c) {
+    const t = c?.token, bad = [c?.editor, c?.stylist].find((m) => m && !m.ok), d = (x) => (x?.detail ? ` (${esc(x.detail)})` : '')
+    if (!t?.ok) {
+      if (t?.code === 'provider_auth') return `Replicate rejected the API token${d(t)}. Copy it again from replicate.com &rsaquo; Account &rsaquo; API tokens${LOCAL ? ', paste it into .env and save' : ' and update it in the hosting settings'}.`
+      if (t?.code === 'provider_billing') return 'The Replicate account has no credit. Add billing at replicate.com &rsaquo; Account &rsaquo; Billing.'
+      if (t?.code === 'provider_unreachable' || t?.code === 'provider_timeout') return 'The Glamify server cannot reach Replicate (internet connection, firewall or proxy on the server).'
+      return `Replicate could not be checked: ${esc(t?.code || 'unknown error')}${d(t)}.`
+    }
+    if (bad?.code === 'inputs_changed') return `The AI model ${esc(bad.model)} no longer accepts ${esc((bad.missing || []).join(', '))}. Choose another model (README section S).`
+    if (bad) return `The AI model ${esc(bad.model)} is not available: ${esc(bad.code)}${d(bad)}.`
+    return ''
+  }
   async function checkHealth() {
-    S.health = 'checking'; status('Checking the AI services&hellip;'); sync()
+    S.health = 'checking'; S.check = null; status('Checking the AI services&hellip;'); sync()
     try {
       const h = await api.health(); S.setup = h.tryon?.makeover || null; S.guestHours = h.limits?.guestHours || 24
       S.health = S.setup?.ready ? 'ready' : 'off'
-    } catch { S.setup = null; S.health = 'offline' }
-    if (S.health === 'off') status(`<b>AI Photo Makeover is not switched on for this website yet.</b> The site owner needs to add ${esc((S.setup?.missing || ['the AI service key']).join(' and '))} (README: AI Photo Makeover). No photo can be created until then. <button type="button" data-mk="recheck">Check again</button>`, 'warn')
-    else if (S.health === 'offline') status('<b>The Glamify server cannot be reached.</b> Check your internet connection and try again. <button type="button" data-mk="recheck">Check again</button>', 'warn')
-    else status('')
+    } catch (e) { S.setup = null; S.health = e.code === 'offline' ? 'offline' : 'noserver' }
+    if (S.health === 'ready') {
+      try { S.check = (await api.makeoverCheck()).check; if (!S.check.ready) S.health = 'broken' }
+      catch (e) { if (e.status !== 429) { S.health = 'broken'; S.check = { token: { ok: false, code: e.code } } } }
+    }
+    const miss = esc((S.setup?.missing || ['REPLICATE_API_TOKEN']).join(' and '))
+    if (S.health === 'off') status(`<b>AI Photo Makeover is not switched on: ${miss} is not set on the server.</b> ${LOCAL ? 'Put it in the <code>.env</code> file in the project folder (next to package.json), save the file, then press Check again.' : 'The site owner needs to add it to the hosting settings (Netlify: Environment variables) and redeploy.'} ${again}`, 'warn')
+    else if (S.health === 'broken') status(`<b>AI Photo Makeover is set up but not working.</b> ${problem(S.check)} ${again}`, 'error')
+    else if (S.health === 'noserver') status(`<b>This page is not connected to the Glamify server.</b> ${LOCAL ? 'Start it with <code>npm run dev</code> and open the address it prints (http://localhost:5173). VS Code Live Server or a double-clicked index.html has no server.' : 'The AI service is not available at this address.'} ${again}`, 'warn')
+    else if (S.health === 'offline') status(`<b>The Glamify server cannot be reached.</b> Check your internet connection and try again. ${again}`, 'warn')
+    else status(`<b>AI connected.</b> Ready to create your look (${esc(S.setup?.stylist || 'AI stylist')} + ${esc(S.setup?.editor || 'AI image editor')}).`, 'ok')
     consentText(); sync(); loadHistory()
   }
   function consentText() {
@@ -147,6 +171,7 @@ export function initMakeover(hooks = {}) {
   function why() {
     if (S.job) return ''
     if (S.health === 'checking') return 'Checking the AI services&hellip;'
+    if (S.health === 'broken') return 'The AI service needs attention (see the message above).'
     if (S.health !== 'ready') return 'AI Photo Makeover is not available right now.'
     if (!S.person) return 'Add your photo (A) to continue.'
     if (!S.garment && outfitText().length < 3) return 'Upload your outfit photo or describe your outfit (B).'
@@ -192,14 +217,14 @@ export function initMakeover(hooks = {}) {
       const deadline = Date.now() + 8 * 60_000
       while (S.job && Date.now() < deadline) {
         if (job.status === 'succeeded') { await showResult(job); return }
-        if (job.status === 'failed') throw new Error(job.error?.message || 'The AI could not finish this makeover.')
+        if (job.status === 'failed') throw Object.assign(new Error(job.error?.message || 'The AI could not finish this makeover.'), { detail: job.error?.detail })
         S.job.stage = job.stage; tick()
         await new Promise((ok) => setTimeout(ok, 1800))
         if (!S.job) return
         job = (await api.makeoverStatus(job.id, ctl.signal)).job
       }
       if (S.job) throw new Error('This is taking too long. Please try again.')
-    } catch (e) { if (e.name !== 'AbortError' && S.job) status(`<b>No makeover was created.</b> ${esc(e.message)}`, 'error') }
+    } catch (e) { if (e.name !== 'AbortError' && S.job) status(`<b>No makeover was created.</b> ${esc(e.message)}${e.detail ? `<br><small>Reason from the AI service: ${esc(e.detail)}</small>` : ''}`, 'error') }
     finally { finish(); loadHistory() }
   }
   function tick() {
@@ -239,6 +264,7 @@ export function initMakeover(hooks = {}) {
     saved.textContent = session.user ? 'Saved to My makeovers in your account.' : `Saved to My makeovers for ${S.guestHours} hours. Use "Save My Look" to keep it.`
     $('[data-mk="save"]').textContent = session.user ? 'Saved ✓' : 'Save My Look'
     setSplit(50); res.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (!origUrl) status('<b>Done.</b> Your new photo is ready below.', 'ok')
   }
   function hideResult() { if (S.result) URL.revokeObjectURL(S.result); S.result = null; S.resultBlob = null; S.resultJob = null; $('.mk-result').hidden = true }
   const setSplit = (v) => { const c = $('.at-cmp'); c.style.setProperty('--split', v + '%'); c.querySelector('input').value = v }
@@ -248,7 +274,7 @@ export function initMakeover(hooks = {}) {
   // ---------------- My makeovers ----------------
   async function loadHistory() {
     const box = $('.at-hist')
-    if (S.health === 'offline' || S.health === 'checking') { box.hidden = true; return }
+    if (['offline', 'noserver', 'checking'].includes(S.health)) { box.hidden = true; return }
     let r; try { r = await api.history('makeover') } catch { box.hidden = true; return }
     S.history = r.items; histUrls.forEach((u) => URL.revokeObjectURL(u)); histUrls = []
     box.hidden = !r.items.length

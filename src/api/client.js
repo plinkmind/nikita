@@ -35,6 +35,7 @@ export const api = {
   // AI Photo Makeover (photos as files, the rest as text fields)
   makeover: (fields, signal) => { const f = new FormData(); for (const [k, v] of Object.entries(fields)) { if (v == null) continue; if (v instanceof Blob) f.append(k, v, `${k}.jpg`); else f.append(k, String(v)) } return request('POST', '/api/makeover/generate', { form: f, signal }) },
   makeoverStatus: (id, signal) => request('GET', `/api/makeover/status/${id}`, { signal }),
+  makeoverCheck: () => request('GET', '/api/makeover/check'),
   complete: (id, blob) => { const f = new FormData(); f.append('result', blob, 'result.png'); return request('POST', `/api/tryon/${id}/complete`, { form: f }) },
   fail: (id, code) => request('POST', `/api/tryon/${id}/fail`, { json: { code } }),
   history: (type) => request('GET', `/api/tryon/history${type ? `?type=${type}` : ''}`),

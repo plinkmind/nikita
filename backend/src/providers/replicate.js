@@ -1,7 +1,8 @@
 // AI hairstyles: FLUX.1 Kontext [pro] (text-instructed image editing) on Replicate. Paid (about $0.04 per image).
 // Asynchronous API: POST /v1/models/<owner>/<name>/predictions -> { id }, then GET /v1/predictions/:id.
 // A general image editor, not a dedicated hair model: it usually keeps the face, but there is no identity guarantee.
-import { providerFetch } from './http.js'
+import { providerFetch, providerBytes } from './http.js'
+import { replicateFileHeaders } from './makeover.js'
 import { toDataUri } from '../services/images.js'
 import { STYLES, COLOURS, hairPrompt } from './prompts.js'
 
@@ -23,7 +24,8 @@ export const replicateHair = {
     if (st?.status === 'succeeded') {
       const out = Array.isArray(st.output) ? st.output[0] : st.output
       if (!out) return { state: 'failed', code: 'provider_empty' }
-      const bytes = await providerFetch(out, {}, cfg.providers.timeoutMs)
+      // Replicate's output files (replicate.delivery) need the API token to download
+      const bytes = await providerBytes(out, { headers: replicateFileHeaders(cfg, out) }, cfg.providers.timeoutMs)
       return bytes instanceof Uint8Array ? { state: 'succeeded', bytes } : { state: 'failed', code: 'provider_empty' }
     }
     if (st?.status === 'failed' || st?.status === 'canceled') return { state: 'failed', code: /nsfw|safety|flagged/i.test(st.error || '') ? 'blocked' : 'provider_error' }

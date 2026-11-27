@@ -59,7 +59,7 @@ export async function startMockProviders() {
   const st = { fashnMode: 'ok', fashnRuns: 0, polls: 0, runFailOnce: false, lastFashn: null, lastReplicate: null, cancelled: [], resultPng: png(600, 900),
     // AI Photo Makeover: stylist (Replicate vision model / Anthropic) and image editor (Replicate)
     stylistMode: 'ok', stylistRuns: 0, stylistPolls: {}, lastStylist: null, editMode: 'ok', editRuns: 0, editPolls: {}, lastEdit: null, editModel: null,
-    anthropicMode: 'ok', anthropicCalls: 0, lastAnthropic: null, lastAnthropicHeaders: null, plan: PLAN, makeoverJpg: png(512, 768, [180, 120, 110]) }
+    anthropicMode: 'ok', anthropicCalls: 0, uploads: [], deletedFiles: [], lastAnthropic: null, lastAnthropicHeaders: null, plan: PLAN, makeoverJpg: png(512, 768, [180, 120, 110]) }
   const server = http.createServer(async (req, res) => {
     let b = []; for await (const c of req) b.push(c); b = Buffer.concat(b).toString()
     const j = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)) }
@@ -102,6 +102,24 @@ export async function startMockProviders() {
       return j(200, { id: mm[1], status: 'succeeded', output: `http://127.0.0.1:${server.address().port}/files/${st.editMode === 'garbage' ? 'notimage.jpg' : 'makeover.jpg'}` })
     }
     mm = /^\/replicate\/v1\/predictions\/(\w+)\/cancel$/.exec(req.url); if (mm && req.method === 'POST') { st.cancelled.push(mm[1]); return j(200, { id: mm[1], status: 'canceled' }) }
+    // Replicate account (token check) and model info with its input schema
+    if (req.url === '/replicate/v1/account') return req.headers.authorization === 'Bearer r8-test' ? j(200, { type: 'user', username: 'glamify-test', name: 'Test' }) : j(401, { detail: 'Invalid token.' })
+    mm = /^\/replicate\/v1\/models\/([\w.-]+\/[\w.-]+)$/.exec(req.url)
+    if (mm && req.method === 'GET') {
+      const props = { 'google/nano-banana': ['prompt', 'image_input', 'aspect_ratio', 'output_format'], 'google/nano-banana-old': ['prompt', 'aspect_ratio'], 'openai/gpt-4.1-mini': ['prompt', 'system_prompt', 'image_input', 'temperature', 'max_completion_tokens'], 'black-forest-labs/flux-kontext-max': ['prompt', 'input_image'] }[mm[1]]
+      if (!props) return j(404, { detail: 'Model not found' })
+      return j(200, { owner: mm[1].split('/')[0], name: mm[1].split('/')[1], latest_version: { id: 'v1', openapi_schema: { components: { schemas: { Input: { properties: Object.fromEntries(props.map((k) => [k, { type: 'string' }])) } } } } } })
+    }
+    // Replicate Files API (multipart field "content"; the file's urls.get is used as a model input), and its delete
+    if (req.url === '/replicate/v1/files' && req.method === 'POST') {
+      const ok = /multipart\/form-data/.test(req.headers['content-type'] || '') && /name="content"; filename="photo\.(jpg|png|webp)"/.test(b) && req.headers.authorization === 'Bearer r8-test'
+      if (!ok) return j(422, { detail: 'content is required' })
+      const id = 'f' + (st.uploads.length + 1); st.uploads.push({ id, bytes: Buffer.byteLength(b, 'latin1') })
+      return j(201, { id, urls: { get: `${'http://127.0.0.1:' + server.address().port}/replicate/v1/files/${id}` } })
+    }
+    mm = /^\/replicate\/v1\/files\/(f\d+)$/.exec(req.url); if (mm && req.method === 'DELETE') { st.deletedFiles.push(mm[1]); res.writeHead(204); return res.end() }
+    // Replicate output files need the API token (replicate.delivery); the mock refuses downloads without it
+    if (req.url.startsWith('/files/') && req.headers.authorization !== 'Bearer r8-test') return j(401, { detail: 'Unauthenticated' })
     if (req.url === '/files/makeover.jpg') { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(st.makeoverJpg) }
     if (req.url === '/files/notimage.jpg') { res.writeHead(200, { 'content-type': 'image/jpeg' }); return res.end(Buffer.from('<html>not an image</html>')) }
     // Anthropic Messages API (optional Claude stylist)

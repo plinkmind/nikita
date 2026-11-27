@@ -1,5 +1,23 @@
 # Testing report
 
+## Update 21: real-API integration
+
+| Test | Result |
+|---|---|
+| Backend suite (`npm test`) | 83 of 83 (28 makeover tests on 2 storage drivers) |
+| New: photo > 256 KB uploaded through the Files API once, reused by stylist + editor, deleted afterwards | pass (mock) |
+| New: result download sends the token (the mock refuses downloads without it, as Replicate does) | pass (mock) |
+| New: provider's reason kept (`error.detail`) | pass (mock) |
+| New: live check - accepted token, wrong token (401), unknown model (404), model whose inputs changed | pass (mock) |
+| `.env` added while `npm run dev` runs (BOM, quotes, CRLF), no restart: health not ready -> ready, live check OK | pass |
+| `npm start` reads `.env` and reports the key (first 3 characters only) | pass |
+| Page status: key works / wrong key / no key / static server (Live Server) -> 4 different, correct messages; Check again | pass |
+| Full browser flow (upload, describe, occasion, instructions, create, result, download, another, failure) | pass (mock AI) |
+| `npm run makeover:check` / `makeover:live` code paths (no key, check, full run saving a file) | pass (mock AI) |
+| `npm run build` | pass |
+| Secret scan of the project (r8_ / sk- / sk-ant- / fa- keys) | none found |
+| **Real Replicate call** | **not run** (no key and no access to replicate.com here) |
+
 ## Update 20: AI Photo Makeover
 
 **Real AI services: NOT tested** (no API keys in this environment, and replicate.com is not reachable from it). Everything

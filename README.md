@@ -394,3 +394,34 @@ Check `GET /api/health` > `tryon.makeover`: `ready: true` and which services it 
 **Before going live**: make a few real looks with your key (different skin tones, outfits, occasions) and check that the
 face is preserved: image editors usually keep identity, but no model guarantees it. Model names on Replicate can change:
 if one is retired, set `MAKEOVER_EDIT_MODEL` / `MAKEOVER_STYLIST_MODEL` to its successor.
+
+### S2. Update 21: connecting the real AI (your .env key)
+
+**Where the key goes**: a file named `.env` in the project folder, next to `package.json` (copy `.env.example`):
+```
+REPLICATE_API_TOKEN=r8_your_token_here
+```
+`.env` is in `.gitignore` (never committed) and is only read by the server: the browser never receives it.
+On Netlify, `.env` is NOT used: add the same name in Site configuration > Environment variables, then redeploy.
+
+**Start commands** (from the project folder)
+- Development, website + API together: `npm run dev` -> open http://localhost:5173 (the address it prints). The terminal
+  says `REPLICATE_API_TOKEN: set (r8_...N characters)` or `NOT SET`. Editing `.env` while it runs is picked up automatically.
+- Production-like, one server: `npm run build` then `npm start` -> http://localhost:8787. Restart after editing `.env`.
+- Do not use VS Code Live Server or open index.html directly: there is no API there (the page now says so).
+
+**Test real AI generation**
+1. `npm run makeover:check` (free): checks that Replicate accepts your token and that both models exist and take the inputs
+   this code sends. Fix anything it reports first (wrong token, no billing, renamed model).
+2. `npm run makeover:live -- path/to/your-photo.jpg "Red bridal lehenga with golden embroidery" bridal "golden eyes, deep red lips"`
+   (add `--garment=path/to/outfit.jpg` to also use an outfit photo). Calls the real AIs (a few cents), saves the generated
+   photo to `test-results/` and prints the AI's makeup plan.
+3. In the website: `npm run dev`, open "04 · AI Photo Makeover" (or "AI Photo Makeover" on the last screen). The status
+   line must say "AI connected". Upload, describe, Create My AI Look, then Download My Look.
+
+**Fixed in this update**: generated images are downloaded from Replicate with the token (Replicate requires it: the result
+would have been refused); photos over 256 KB are sent through Replicate's Files API (Replicate's limit for inline data)
+and deleted from Replicate when the job ends; Replicate's own error reason is kept and shown; "Check again" really
+re-checks (live check of token and models; with `npm run dev` the `.env` is re-read); a page without a server, a missing
+key, a rejected key, no credit and a missing model each get their own message; `.env` lines with quotes, spaces,
+`export`, Windows line endings or a BOM are read correctly. The same download fix applies to AI hairstyles.

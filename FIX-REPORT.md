@@ -1,3 +1,27 @@
+# Update 21: AI Photo Makeover connected to the real Replicate API (key from .env)
+**Bugs fixed** (found by checking Replicate's API documentation against the Update 20 code):
+1. Generated images were downloaded WITHOUT the API token. Replicate serves output files from replicate.delivery and requires
+   the token: the first real result would have been refused (also affected AI hairstyles). Fixed for both.
+2. Photos were always sent inline as data URIs; Replicate recommends data URIs only up to 256 KB. Larger photos now go
+   through Replicate's Files API (uploaded once per job, reused, deleted from Replicate when the job ends).
+3. "Check again" could never succeed after adding the key: `npm run dev` built the backend once and kept the old settings.
+   The backend now re-reads `.env` when it changes. "Check again" also runs a live check (token accepted? models exist and
+   accept our inputs?) instead of only asking whether a key is present.
+4. A page with no server (VS Code Live Server, a double-clicked index.html) said "check your internet connection"; it now
+   says the page is not connected to the server and how to start it (also on See It On You).
+5. Replicate's own error reason (e.g. "Invalid token", "insufficient credit", a rejected input) was dropped; it is kept and
+   shown under the error. HTTP 404 (model renamed) has its own message.
+6. `.env` values with surrounding quotes or `export` in front, and placeholder values, are handled.
+
+**New**: `GET /api/makeover/check`; `npm run makeover:check` (free) and `npm run makeover:live` (real generation from the
+command line, saves the photo to test-results/); key-found lines in the dev and `npm start` terminals (first 3 characters
+only); success / error / connected status messages on the page; `.env.*` and the live-test outputs in `.gitignore`.
+
+**Not verified here**: a real Replicate call. This environment has no key and cannot reach replicate.com. Run
+`npm run makeover:check`, then `npm run makeover:live -- your-photo.jpg "outfit"` with your key.
+
+---
+
 # Update 20: AI PHOTO MAKEOVER (personal AI makeup artist for a photo)
 **Status: built and tested against simulated AI services. NOT yet run against the real AI services**: that needs your
 `REPLICATE_API_TOKEN`. No AI-generated makeover photo has been received yet, so the quality of the real result (identity,

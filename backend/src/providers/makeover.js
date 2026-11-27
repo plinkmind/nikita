@@ -12,7 +12,7 @@
 // Every AI step is asynchronous (start, then poll), so no request waits more than a few seconds: Netlify stops a function after
 // 10 s. Photos are sent as data URIs (the browser shrinks them to about 1280 px first), never put on a public URL.
 // Nothing is ever faked: when a step fails, the job fails with the reason.
-import { providerFetch } from './http.js'
+import { providerFetch, providerBytes } from './http.js'
 import { toDataUri } from '../services/images.js'
 
 export const OCCASIONS = {
@@ -24,6 +24,55 @@ export const MAKEUP_KEYS = ['foundation', 'concealer', 'contour', 'blush', 'high
 const MODEL_RE = /^[a-z0-9][\w.-]{0,63}\/[a-z0-9][\w.-]{0,99}$/i
 
 const rHeaders = (cfg) => ({ authorization: `Bearer ${cfg.providers.replicate.token}`, 'content-type': 'application/json' })
+// Replicate output files are served from replicate.delivery and need the token (Replicate HTTP API docs); other hosts never get it
+export function replicateFileHeaders(cfg, url) {
+  let h = ''; try { h = new URL(url).hostname } catch { return {} }
+  const api = (() => { try { return new URL(cfg.providers.replicate.base).hostname } catch { return '' } })()
+  return h === api || h === 'replicate.delivery' || h.endsWith('.replicate.delivery') || h === 'api.replicate.com' ? { authorization: `Bearer ${cfg.providers.replicate.token}` } : {}
+}
+
+// Photos go to Replicate as data URIs when small (<= 256 KB) and through Replicate's Files API when larger, as Replicate
+// recommends. Uploaded files are deleted when the makeover finishes (deleteReplicateFile).
+const DATA_URI_MAX = 256 * 1024
+export async function replicateInput(cfg, img) {
+  if (img.bytes.length <= DATA_URI_MAX) return { url: toDataUri(img) }
+  const form = new FormData()
+  form.append('content', new Blob([img.bytes], { type: img.mime }), img.mime === 'image/png' ? 'photo.png' : img.mime === 'image/webp' ? 'photo.webp' : 'photo.jpg')
+  form.append('metadata', new Blob([JSON.stringify({ app: 'glamify-makeover' })], { type: 'application/json' }))
+  const j = await providerFetch(`${cfg.providers.replicate.base}/files`, { method: 'POST', headers: { authorization: `Bearer ${cfg.providers.replicate.token}` }, body: form }, cfg.providers.timeoutMs)
+  if (!j?.urls?.get) throw fail('provider_error', true)
+  return { url: j.urls.get, id: String(j.id || '') }
+}
+export async function deleteReplicateFile(cfg, id) {
+  if (!id) return
+  await providerFetch(`${cfg.providers.replicate.base}/files/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { authorization: `Bearer ${cfg.providers.replicate.token}` } }, cfg.providers.timeoutMs)
+}
+
+// Live check of the Replicate setup (GET /api/makeover/check): the token is accepted, and each model exists and takes the
+// inputs this code sends (read from the model's published input schema). Costs nothing: no prediction is created.
+export async function checkSetup(cfg) {
+  const out = { token: null, editor: null, stylist: null }
+  if (!cfg.providers.replicate.token) return { ...out, token: { ok: false, code: 'missing' } }
+  const get = (path) => providerFetch(`${cfg.providers.replicate.base}${path}`, { headers: rHeaders(cfg) }, cfg.providers.timeoutMs)
+  const why = (e) => ({ ok: false, code: e.code || 'provider_error', status: e.status || null, detail: e.detail || '' })
+  try { await get('/account'); out.token = { ok: true } } catch (e) { out.token = why(e); return out }
+  const model = async (name, need) => {
+    if (!MODEL_RE.test(name)) return { model: name, ok: false, code: 'bad_model_name' }
+    try {
+      const m = await get(`/models/${name}`), props = Object.keys(m?.latest_version?.openapi_schema?.components?.schemas?.Input?.properties || {})
+      const missing = props.length ? need.filter((k) => !props.includes(k)) : []
+      return { model: name, ok: !missing.length, ...(missing.length ? { code: 'inputs_changed', missing } : {}) }
+    } catch (e) { return { model: name, ...why(e) } }
+  }
+  const em = cfg.makeover.editModel
+  out.editor = await model(em, multiImage(em) ? ['prompt', 'image_input'] : ['prompt', 'input_image'])
+  if (pickStylist(cfg) === anthropicStylist) {
+    const a = cfg.makeover.anthropic
+    try { await providerFetch(`${a.base}/models/${encodeURIComponent(a.model)}`, { headers: { 'x-api-key': a.key, 'anthropic-version': a.version } }, cfg.providers.timeoutMs); out.stylist = { model: a.model, ok: true } }
+    catch (e) { out.stylist = { model: a.model, ...why(e) } }
+  } else out.stylist = await model(cfg.makeover.stylistModel, ['prompt', 'system_prompt', 'image_input'])
+  return out
+}
 const fail = (code, retryable = false) => Object.assign(new Error(code), { code, retryable })
 
 // ---------- Replicate (shared) ----------
@@ -36,7 +85,7 @@ async function replicateStart(cfg, model, input) {
 async function replicateCheck(cfg, id) {
   const st = await providerFetch(`${cfg.providers.replicate.base}/predictions/${encodeURIComponent(id)}`, { headers: rHeaders(cfg) }, cfg.providers.timeoutMs)
   if (st?.status === 'succeeded') return { state: 'succeeded', output: st.output }
-  if (st?.status === 'failed' || st?.status === 'canceled') return { state: 'failed', code: /nsfw|safety|flagged|sensitive|block/i.test(String(st.error || '')) ? 'blocked' : 'provider_error' }
+  if (st?.status === 'failed' || st?.status === 'canceled') return { state: 'failed', code: /nsfw|safety|flagged|sensitive|block/i.test(String(st.error || '')) ? 'blocked' : 'provider_error', detail: String(st.error || '').replace(/[\u0000-\u001f<>]/g, ' ').slice(0, 200) }
   return { state: 'processing' }
 }
 export async function replicateCancel(cfg, id) {
@@ -80,8 +129,8 @@ export const replicateStylist = {
   id: 'replicate-stylist', async: true,
   label: (cfg) => `${cfg.makeover.stylistModel} on Replicate`,
   available: (cfg) => !!cfg.providers.replicate.token,
-  async start(images, o, cfg) {
-    return replicateStart(cfg, cfg.makeover.stylistModel, { system_prompt: SYSTEM, prompt: stylistText(o), image_input: images.map(toDataUri), temperature: o.avoid ? 0.9 : 0.6, max_completion_tokens: 1200 })
+  async start(urls, o, cfg) { // urls: from replicateInput()
+    return replicateStart(cfg, cfg.makeover.stylistModel, { system_prompt: SYSTEM, prompt: stylistText(o), image_input: urls, temperature: o.avoid ? 0.9 : 0.6, max_completion_tokens: 1200 })
   },
   async check(id, cfg) {
     const r = await replicateCheck(cfg, id)
@@ -143,8 +192,8 @@ export const editor = {
   available: (cfg) => !!cfg.providers.replicate.token,
   multiImage: (cfg) => multiImage(cfg.makeover.editModel),
   // images[0] = the person (or the person already dressed in the outfit by FASHN); images[1] = outfit photo (optional)
-  async start(images, prompt, cfg) {
-    const model = cfg.makeover.editModel, uris = images.map(toDataUri)
+  async start(uris, prompt, cfg) { // uris: from replicateInput()
+    const model = cfg.makeover.editModel
     const input = multiImage(model)
       ? { prompt, image_input: uris, aspect_ratio: 'match_input_image', output_format: 'jpg' }
       : { prompt, input_image: uris[0], aspect_ratio: 'match_input_image', output_format: 'jpg', safety_tolerance: 2 }
@@ -155,8 +204,8 @@ export const editor = {
     if (r.state !== 'succeeded') return r
     const out = Array.isArray(r.output) ? r.output[0] : r.output
     if (!out || typeof out !== 'string') return { state: 'failed', code: 'provider_empty' }
-    const bytes = await providerFetch(out, {}, cfg.providers.timeoutMs)
-    return bytes instanceof Uint8Array ? { state: 'succeeded', bytes } : { state: 'failed', code: 'provider_empty' }
+    const bytes = await providerBytes(out, { headers: replicateFileHeaders(cfg, out) }, cfg.providers.timeoutMs)
+    return bytes.length ? { state: 'succeeded', bytes } : { state: 'failed', code: 'provider_empty' }
   },
 }
 

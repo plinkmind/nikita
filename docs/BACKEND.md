@@ -91,3 +91,10 @@ Add a mock of its API to `tests/backend/helpers.mjs` and a test to `tests/backen
 - Netlify free plan: 300 credits/month; **each production deploy costs 15 credits**; when credits run out the site is paused
   until the next month. Functions/Blobs use a little compute; normal use of this site is small.
 - Blobs is eventually consistent by default; this backend asks for **strong** consistency.
+
+## AI Photo Makeover files (Updates 20-21)
+    providers/makeover.js    AI stylist + image editor on Replicate (optional Claude), Replicate Files API uploads for photos
+                             over 256 KB, authorised result downloads, live setup check (checkSetup)
+    services/makeover.js     the job: FASHN outfit (optional) -> stylist -> editor, one short provider call per status request
+    controllers/makeoverController.js   POST /api/makeover/generate, GET /api/makeover/status/:id, GET /api/makeover/check
+    scripts/makeover-live.mjs           npm run makeover:check / makeover:live: real end-to-end test with the .env key

@@ -3,6 +3,7 @@
 // Data goes to the folder DATA_DIR (default .data/) unless STORAGE_DRIVER says otherwise. Settings: .env (see .env.example).
 import http from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { join, extname, normalize, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createApp } from './src/app.js'
@@ -33,7 +34,11 @@ const server = http.createServer(async (req, res) => {
 })
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  server.listen(port, host, () => console.log(`Glamify Mirror Me running on http://localhost:${port} (storage: ${app.storage.driver}, outfit AI: ${app.cfg.providers.fashn.key ? 'FASHN' : app.cfg.providers.freeEnabled ? 'free (Hugging Face)' : 'off'})`))
+  server.listen(port, host, () => {
+    console.log(`Glamify Mirror Me running on http://localhost:${port} (storage: ${app.storage.driver}, outfit AI: ${app.cfg.providers.fashn.key ? 'FASHN' : app.cfg.providers.freeEnabled ? 'free (Hugging Face)' : 'off'})`)
+    const r = app.cfg.providers.replicate.token
+    console.log(`AI Photo Makeover: ${r ? `REPLICATE_API_TOKEN found (${r.slice(0, 3)}...${r.length} characters), models ${app.cfg.makeover.stylistModel} + ${app.cfg.makeover.editModel}` : 'off: REPLICATE_API_TOKEN not found in .env'}${existsSync(join(dist, 'index.html')) ? '' : '  |  WARNING: no website build in dist/ - run "npm run build" first'}`)
+  })
   const t = setInterval(() => app.cleanup().catch((e) => console.error('[cleanup]', e.message)), 30 * 60_000); t.unref()
 }
 export { server, app }

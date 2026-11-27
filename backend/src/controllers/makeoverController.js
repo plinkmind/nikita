@@ -13,6 +13,10 @@ export const makeoverController = {
     const job = await ctx.services.makeover.generate(owner, form, ctx.ip)
     return json(202, { job: view(ctx, job), guest: !ctx.user })
   },
+  // live check of the AI setup (token accepted, models available): used by the page's status line and "Check again"
+  async check(ctx) {
+    return json(200, { check: await ctx.services.makeover.check(ctx.ip) })
+  },
   async status(ctx) {
     const owner = ownerOf(ctx); if (!owner) throw notFound('This makeover was not found.')
     return json(200, { job: view(ctx, await ctx.services.makeover.status(owner, ctx.params.id)) })

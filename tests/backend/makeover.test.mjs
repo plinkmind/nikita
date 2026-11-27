@@ -21,7 +21,7 @@ for (const driver of (process.env.DRIVERS_MAKEOVER || 'memory,fs').split(',')) {
       mk = (env = {}) => createApp({ env: { ...mock.env, STORAGE_DRIVER: driver, DATA_DIR: join(dir, `d${++n}`), STORE_PREFIX: `m${n}`, PROVIDER_CHECK_MS: '0', NODE_ENV: 'test', ...env }, logger: { error() {} } })
     })
     after(async () => { await mock.close(); await rm(dir, { recursive: true, force: true }) })
-    const reset = () => Object.assign(mock.st, { stylistMode: 'ok', editMode: 'ok', fashnMode: 'ok', anthropicMode: 'ok', lastStylist: null, lastEdit: null, lastFashn: null, lastAnthropic: null, anthropicCalls: 0, cancelled: [], plan: PLAN })
+    const reset = () => Object.assign(mock.st, { stylistMode: 'ok', editMode: 'ok', fashnMode: 'ok', anthropicMode: 'ok', lastStylist: null, lastEdit: null, lastFashn: null, lastAnthropic: null, anthropicCalls: 0, cancelled: [], uploads: [], deletedFiles: [], plan: PLAN })
 
     test('not configured: honest 503 naming the missing key, health says not ready', async () => {
       const c = new Client(await mk())
@@ -139,6 +139,39 @@ for (const driver of (process.env.DRIVERS_MAKEOVER || 'memory,fs').split(',')) {
       assert.match(mock.st.lastStylist.input.prompt, /already tried "Classic red bride".*DIFFERENT/)
       const p = mock.st.lastEdit.input.prompt
       assert.ok(!/[<>{}\n]/.test(p)); assert.ok(r.data.job.plan.makeup.lipstick.length <= 180)
+    })
+
+    test('photos over 256 KB go through the Replicate Files API (once per job) and are deleted afterwards; result download carries the token', async () => {
+      reset(); const c = new Client(await mk({ REPLICATE_API_TOKEN: 'r8-test' }))
+      const r = await wait(c, (await c.post('/api/makeover/generate', { form: { consent: 'true', person: PORTRAIT_PNG, garment: PERSON_JPG, outfitText: 'emerald saree' } })).data.job.id)
+      assert.equal(r.data.job.status, 'succeeded', JSON.stringify(r.data.job.error))
+      assert.equal(mock.st.uploads.length, 1, 'the 1.1 MB photo is uploaded once, the 54 KB one goes inline')
+      const fileUrl = mock.st.lastStylist.input.image_input[0]
+      assert.match(fileUrl, /\/replicate\/v1\/files\/f1$/); assert.match(mock.st.lastStylist.input.image_input[1], /^data:image\/jpeg;base64,/)
+      assert.equal(mock.st.lastEdit.input.image_input[0], fileUrl, 'the editor reuses the uploaded file')
+      assert.deepEqual(mock.st.deletedFiles, ['f1'], 'uploaded photo deleted from Replicate when done')
+      const img = await c.get(r.data.job.result.url); assert.equal(img.status, 200) // the mock refuses downloads without the token
+    })
+
+    test('a provider refusal keeps the provider\'s reason for the site owner (e.g. no credit)', async () => {
+      reset(); const c = new Client(await mk({ REPLICATE_API_TOKEN: 'r8-test' }))
+      mock.st.stylistMode = 'fail'
+      const r = await wait(c, (await c.post('/api/makeover/generate', { form: { consent: 'true', person: PERSON_JPG, outfitText: 'black gown' } })).data.job.id)
+      assert.equal(r.data.job.error.code, 'stylist_error'); assert.equal(r.data.job.error.detail, 'model error')
+    })
+
+    test('live setup check: token accepted, models exist and take the inputs we send; cached; wrong token reported', async () => {
+      reset(); let c = new Client(await mk({ REPLICATE_API_TOKEN: 'r8-test' }))
+      let r = await c.get('/api/makeover/check')
+      assert.equal(r.status, 200); assert.equal(r.data.check.ready, true, JSON.stringify(r.data.check))
+      assert.deepEqual([r.data.check.token.ok, r.data.check.editor.model, r.data.check.stylist.model], [true, 'google/nano-banana', 'openai/gpt-4.1-mini'])
+      assert.ok(!JSON.stringify(r.data).includes('r8-test'), 'never returns the token')
+      c = new Client(await mk({ REPLICATE_API_TOKEN: 'r8-wrong' }))
+      r = await c.get('/api/makeover/check'); assert.equal(r.data.check.ready, false); assert.equal(r.data.check.token.code, 'provider_auth')
+      c = new Client(await mk({ REPLICATE_API_TOKEN: 'r8-test', MAKEOVER_EDIT_MODEL: 'google/no-such-model' }))
+      r = await c.get('/api/makeover/check'); assert.equal(r.data.check.ready, false); assert.equal(r.data.check.editor.code, 'provider_not_found')
+      c = new Client(await mk({ REPLICATE_API_TOKEN: 'r8-test', MAKEOVER_EDIT_MODEL: 'google/nano-banana-old' }))
+      r = await c.get('/api/makeover/check'); assert.equal(r.data.check.editor.code, 'inputs_changed'); assert.deepEqual(r.data.check.editor.missing, ['image_input'])
     })
 
     test('deleting a makeover that is still running cancels the AI job and removes everything', async () => {

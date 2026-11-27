@@ -144,3 +144,8 @@ stylist_error, stylist_bad, blocked, provider_*, timeout.
 
 History, image and delete use the try-on routes: `GET /api/tryon/history?type=makeover`, `GET /api/images/:id/result`,
 `DELETE /api/tryon/:id` (also cancels a running AI job). `GET /api/health` > `tryon.makeover` shows readiness.
+
+`GET /api/makeover/check` (Update 21) -> `{ check: { ready, token: {ok, code?, status?, detail?}, editor: {model, ok, code?, missing?},
+stylist: {...} } }`: a live check against Replicate (GET /v1/account and GET /v1/models/{model}: the model's input schema
+must contain the inputs this code sends). Nothing is generated. Cached for 60 s; 6 checks per IP per 10 minutes. Never
+returns the token or the account name. Failed jobs may carry `error.detail`: the AI service's own short reason.

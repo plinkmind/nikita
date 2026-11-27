@@ -12,6 +12,9 @@ export function readEnv() {
   return out
 }
 
+// a key copied with quotes, spaces or a stray line break still works; an unfilled placeholder counts as "not set"
+const cleanKey = (v) => { const k = String(v || '').trim().replace(/^(['"])(.*)\1$/, '$2').trim(); return /^(your|xxx|r8_\.\.\.|<|changeme|paste)/i.test(k) ? '' : k }
+
 export function loadConfig(env = readEnv()) {
   const onNetlify = !!(env.NETLIFY || env.NETLIFY_BLOBS_CONTEXT || globalThis.Netlify)
   const production = env.NODE_ENV === 'production' || env.CONTEXT === 'production' || onNetlify
@@ -62,8 +65,8 @@ export function loadConfig(env = readEnv()) {
       outfit: (env.TRYON_PROVIDER || 'auto').toLowerCase(),
       freeEnabled: bool(env.FREE_TRYON, true),
       freeSpace: env.FREE_TRYON_SPACE || 'yisol/IDM-VTON',
-      fashn: { key: env.FASHN_API_KEY || '', base: env.FASHN_BASE || 'https://api.fashn.ai/v1', model: env.FASHN_MODEL || 'tryon-v1.6', mode: env.FASHN_MODE || 'quality' },
-      replicate: { token: env.REPLICATE_API_TOKEN || '', base: env.REPLICATE_BASE || 'https://api.replicate.com/v1', hairModel: env.REPLICATE_HAIR_MODEL || 'black-forest-labs/flux-kontext-pro' },
+      fashn: { key: cleanKey(env.FASHN_API_KEY) || '', base: env.FASHN_BASE || 'https://api.fashn.ai/v1', model: env.FASHN_MODEL || 'tryon-v1.6', mode: env.FASHN_MODE || 'quality' },
+      replicate: { token: cleanKey(env.REPLICATE_API_TOKEN), base: env.REPLICATE_BASE || 'https://api.replicate.com/v1', hairModel: env.REPLICATE_HAIR_MODEL || 'black-forest-labs/flux-kontext-pro' },
       timeoutMs: num(env.PROVIDER_TIMEOUT_MS, 8_000, 2000, 55_000), // one provider call; keep under the host's function limit (Netlify: 10 s)
       // a status request asks the AI service at most this often per job (protects the provider's rate limit)
       checkIntervalMs: num(env.PROVIDER_CHECK_MS, 1500, 0, 60_000),
@@ -74,7 +77,7 @@ export function loadConfig(env = readEnv()) {
       stylist: (env.MAKEOVER_STYLIST || 'auto').toLowerCase(), // auto (Claude if its key is set, else Replicate) | replicate | anthropic
       stylistModel: env.MAKEOVER_STYLIST_MODEL || 'openai/gpt-4.1-mini',
       editModel: env.MAKEOVER_EDIT_MODEL || 'google/nano-banana',
-      anthropic: { key: env.ANTHROPIC_API_KEY || '', base: env.ANTHROPIC_BASE || 'https://api.anthropic.com/v1', model: env.ANTHROPIC_MODEL || 'claude-haiku-5-5', version: env.ANTHROPIC_VERSION || '2023-06-01', timeoutMs: num(env.ANTHROPIC_TIMEOUT_MS, 7_500, 2000, 55_000) },
+      anthropic: { key: cleanKey(env.ANTHROPIC_API_KEY), base: env.ANTHROPIC_BASE || 'https://api.anthropic.com/v1', model: env.ANTHROPIC_MODEL || 'claude-haiku-5-5', version: env.ANTHROPIC_VERSION || '2023-06-01', timeoutMs: num(env.ANTHROPIC_TIMEOUT_MS, 7_500, 2000, 55_000) },
     },
   }
   if (!['blobs', 'fs', 'memory'].includes(cfg.storage.driver)) throw new Error(`STORAGE_DRIVER must be blobs, fs or memory (got "${cfg.storage.driver}")`)

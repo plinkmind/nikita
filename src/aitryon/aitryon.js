@@ -100,10 +100,11 @@ export function initAiTryOn(hooks = {}) {
       const h = await api.health(), o = h.tryon?.outfit
       S.provider = o?.provider || null
       S.health = o?.ready ? (o.provider.mode === 'browser' ? 'free' : 'server') : 'off'
-    } catch { S.provider = null; S.health = FREE_ON ? 'free-local' : 'offline' }
+    } catch (e) { S.provider = null; S.healthErr = e.code; S.health = FREE_ON ? 'free-local' : 'offline' }
     modeText()
     if (S.health === 'off') status('<b>AI outfit try-on is switched off on this website.</b> The site owner can switch it on (README, section O). You can still use the live camera try-on. <button data-at="recheck">Check again</button>', 'warn')
-    else if (S.health === 'offline') status('<b>The Glamify server cannot be reached.</b> Check your internet connection and try again. <button data-at="recheck">Check again</button>', 'warn')
+    else if (S.health === 'offline') status(S.healthErr === 'offline' ? '<b>The Glamify server cannot be reached.</b> Check your internet connection and try again. <button data-at="recheck">Check again</button>'
+      : `<b>This page is not connected to the Glamify server.</b> ${/^(localhost|127\.|10\.|192\.168\.)/.test(location.hostname) ? 'Start it with <code>npm run dev</code> and open the address it prints (http://localhost:5173), not VS Code Live Server.' : 'The AI service is not available at this address.'} <button data-at="recheck">Check again</button>`, 'warn')
     else status('')
     sync(); loadHistory()
   }

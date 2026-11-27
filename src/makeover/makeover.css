@@ -51,3 +51,8 @@
 .mk .at-actions{width:100%}
 @media (max-width:900px){ .mk-plan{grid-template-columns:1fr} .mk-res-grid{grid-template-columns:1fr} }
 @media (max-width:760px){ .mk-tabs button{font-size:13px} .mk-pair{display:none} }
+
+/* status: connected / done */
+.mk .at-status.ok{border-color:rgba(120,200,140,.55);background:rgba(120,200,140,.1)}
+.mk .at-status code{font-size:.92em;padding:1px 6px;border-radius:6px;background:rgba(255,255,255,.1)}
+.mk .at-status small{color:#D3CABD}

@@ -11,7 +11,7 @@ import { ApiError, bad, notFound } from '../http.js'
 import { validateImage, validateResultBytes, fileKey } from './images.js'
 import { isGuestOwner } from '../db/models.js'
 import { fashn } from '../providers/fashn.js'
-import { OCCASIONS, pickStylist, replicateStylist, anthropicStylist, editor, parsePlan, editPrompt, replicateCancel } from '../providers/makeover.js'
+import { OCCASIONS, pickStylist, replicateStylist, anthropicStylist, editor, parsePlan, editPrompt, replicateCancel, replicateInput, deleteReplicateFile, checkSetup } from '../providers/makeover.js'
 
 const text = (v, max) => String(v ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max)
 const yes = (v, def) => (v == null || v === '' ? def : String(v) === 'true')
@@ -37,16 +37,29 @@ export function makeoverService({ TryOn, RateLimit }, storage, cfg, tryon) {
   const expired = (job) => job.expiresAt && Date.parse(job.expiresAt) < Date.now()
   const get = async (owner, kind, job) => { const f = await files.getBytes(fileKey(owner, job.id, kind)); return f ? { bytes: f.bytes, mime: f.meta.mime } : null }
 
-  async function fail(job, code) { return tryon.failJob(job, code) }
-  async function succeed(job, bytes) { return tryon.succeedJob(job, bytes) }
+  // photos uploaded to Replicate's file storage are deleted as soon as the makeover ends (privacy)
+  async function dropUploads(job) {
+    for (const u of Object.values(job.mk?.urls || {})) if (u?.id) { try { await deleteReplicateFile(cfg, u.id) } catch { /* removed later by Replicate */ } }
+    if (job.mk) job.mk.urls = {}
+  }
+  async function fail(job, code, detail) { await dropUploads(job); return tryon.failJob(job, code, detail) }
+  async function succeed(job, bytes) { await dropUploads(job); return tryon.succeedJob(job, bytes) }
+  // a photo as a Replicate input (uploaded once per job, then reused by the stylist and the editor)
+  async function inputUrl(job, kind) {
+    job.mk.urls ||= {}
+    if (job.mk.urls[kind]) return job.mk.urls[kind].url
+    const img = await get(job.owner, kind, job); if (!img) throw Object.assign(new Error('missing input'), { code: 'provider_error' })
+    const u = await replicateInput(cfg, img); job.mk.urls[kind] = u; await TryOn.save(job)
+    return u.url
+  }
 
   // one provider call that may fail temporarily (busy, timeout): retried on later status checks, at most 3 times per step
   async function guarded(job, step, fn) {
     try { return await fn() } catch (e) {
       const n = (job.mk.tries[step] = (job.mk.tries[step] || 0) + 1)
       if (e.retryable && n < 3) { job.stage = 'retrying'; await TryOn.save(job); return undefined }
-      console.warn(`makeover ${job.id}: ${step} failed (${e.code || e.message})`)
-      await fail(job, e.code || 'provider_error'); return undefined
+      console.warn(`makeover ${job.id}: ${step} failed (${e.code || e.message}${e.status ? ' HTTP ' + e.status : ''}${e.detail ? ': ' + e.detail : ''})`)
+      await fail(job, e.code || 'provider_error', e.detail); return undefined
     }
   }
 
@@ -71,7 +84,7 @@ export function makeoverService({ TryOn, RateLimit }, storage, cfg, tryon) {
     return TryOn.save(job)
   }
 
-  const stylistInput = async (job) => {
+  const stylistInput = async (job) => { // for Claude: the photos themselves (sent inside the request)
     const person = await get(job.owner, 'person', job), garment = job.inputs.garment ? await get(job.owner, 'garment', job) : null
     return { images: [person, garment].filter(Boolean), o: { ...job.options, hasGarment: !!garment } }
   }
@@ -99,13 +112,14 @@ export function makeoverService({ TryOn, RateLimit }, storage, cfg, tryon) {
     }
     // Replicate stylist: start, then poll
     if (!mk.stylistId) {
-      const { images, o } = await stylistInput(job); job.stage = 'analysing'
-      const id = await guarded(job, 'stylist', () => replicateStylist.start(images, o, cfg)); if (id === undefined) return job
+      job.stage = 'analysing'
+      const o = { ...job.options, hasGarment: !!job.inputs.garment }
+      const id = await guarded(job, 'stylist', async () => replicateStylist.start([await inputUrl(job, 'person'), ...(job.inputs.garment ? [await inputUrl(job, 'garment')] : [])], o, cfg)); if (id === undefined) return job
       mk.stylistId = id; return TryOn.save(job)
     }
     let r; try { r = await replicateStylist.check(mk.stylistId, cfg) } catch (e) { if (e.retryable) return TryOn.save(job); return fail(job, e.code || 'stylist_error') }
     if (r.state === 'processing') { job.stage = 'analysing'; return TryOn.save(job) }
-    if (r.state === 'failed') return fail(job, r.code === 'blocked' ? 'blocked' : 'stylist_error')
+    if (r.state === 'failed') return fail(job, r.code === 'blocked' ? 'blocked' : 'stylist_error', r.detail)
     try { job.plan = parsePlan(r.text) } catch (e) {
       // one more try with a fresh request if the answer was not usable JSON
       if (e.code === 'stylist_bad' && !mk.stylistRetried) { mk.stylistRetried = true; mk.stylistId = null; return TryOn.save(job) }
@@ -118,24 +132,32 @@ export function makeoverService({ TryOn, RateLimit }, storage, cfg, tryon) {
   async function stepEdit(job) {
     const mk = job.mk
     if (!mk.editId) {
-      const base = mk.dressed ? await get(job.owner, 'dressed', job) : await get(job.owner, 'person', job)
-      const garment = !mk.dressed && job.inputs.garment && editor.multiImage(cfg) ? await get(job.owner, 'garment', job) : null
-      if (!base) return fail(job, 'provider_error')
-      if (!mk.dressed && job.inputs.garment && !garment) mk.notes.push('outfit_not_placed')
-      if (!mk.dressed && garment) mk.notes.push('outfit_by_editor')
-      mk.prompt = editPrompt(job.plan, { ...job.options, dressed: !!mk.dressed, outfitImage: !!garment })
+      const useGarment = !mk.dressed && !!job.inputs.garment && editor.multiImage(cfg)
+      if (!mk.dressed && job.inputs.garment && !useGarment && !mk.notes.includes('outfit_not_placed')) mk.notes.push('outfit_not_placed')
+      if (useGarment && !mk.notes.includes('outfit_by_editor')) mk.notes.push('outfit_by_editor')
+      mk.prompt = editPrompt(job.plan, { ...job.options, dressed: !!mk.dressed, outfitImage: useGarment })
       job.stage = 'styling'
-      const id = await guarded(job, 'edit', () => editor.start([base, garment].filter(Boolean), mk.prompt, cfg)); if (id === undefined) return job
+      const id = await guarded(job, 'edit', async () => editor.start([await inputUrl(job, mk.dressed ? 'dressed' : 'person'), ...(useGarment ? [await inputUrl(job, 'garment')] : [])], mk.prompt, cfg)); if (id === undefined) return job
       mk.editId = id; job.externalId = id; job.status = 'processing'
       return TryOn.save(job)
     }
     let r; try { r = await editor.check(mk.editId, cfg) } catch (e) { if (e.retryable) return TryOn.save(job); return fail(job, e.code || 'provider_error') }
     if (r.state === 'processing') { job.stage = 'styling'; return TryOn.save(job) }
-    if (r.state === 'failed') return fail(job, r.code)
+    if (r.state === 'failed') return fail(job, r.code, r.detail)
     return succeed(job, r.bytes)
   }
 
+  // live setup check, shared by all visitors: cached for a minute, at most a few real checks per visitor
+  let checkCache = { at: 0, value: null }
   const svc = {
+    async check(ip) {
+      if (Date.now() - checkCache.at < 60_000 && checkCache.value) return checkCache.value
+      const r = await RateLimit.hit('mk-check', ip, 6, 600)
+      if (!r.ok) throw new ApiError(429, 'rate_limited', 'Please wait a minute before checking again.', { retryAfter: r.retryAfter })
+      const value = await checkSetup(cfg); value.ready = !!(value.token?.ok && value.editor?.ok && value.stylist?.ok)
+      checkCache = { at: Date.now(), value }; return value
+    },
+
     async generate(owner, form, ip) {
       if (form.get('consent') !== 'true') throw bad('consent_required', 'Please tick the consent box first.')
       const setup = makeoverSetup(cfg)
