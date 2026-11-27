@@ -1,12 +1,12 @@
 {
   "name": "glamify-xr",
   "private": true,
-  "version": "2.4.0",
+  "version": "2.5.0",
   "type": "module",
   "scripts": {
-    "predev": "node scripts/copy-wasm.mjs",
+    "predev": "node scripts/copy-wasm.mjs && node scripts/fetch-models.mjs",
     "dev": "vite --open",
-    "prebuild": "node scripts/copy-wasm.mjs",
+    "prebuild": "node scripts/copy-wasm.mjs && node scripts/fetch-models.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "fetch-models": "node scripts/fetch-models.mjs",

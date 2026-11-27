@@ -1,4 +1,5 @@
 import { loadEnv } from 'vite'
+import { existsSync } from 'node:fs'
 
 // Runs the real backend (backend/src/app.js) inside the Vite dev server, so `npm run dev` gives you the website AND the API
 // on the same address (http://localhost:5173/api/...). Data is stored in the .data/ folder. Server-side settings (API keys)
@@ -32,6 +33,9 @@ function siteUrl() {
 
 export default {
   plugins: [glamifyApi(), siteUrl()],
+  // true when the MediaPipe models were downloaded into public/models (npm run fetch-models, also run before every build):
+  // the site then serves them itself (src/tryon/track/mediapipe.js)
+  define: { __LOCAL_MODELS__: JSON.stringify(existsSync('public/models/face_landmarker/face_landmarker/float16/1/face_landmarker.task')) },
   server: { host: true }, // lets you open the dev site from your phone on the same Wi-Fi
   preview: { host: true },
   build: {

@@ -35,6 +35,7 @@ const TEMPLATE = `
         <p class="ai-err" role="alert" hidden></p>
       </div>
       <div class="ai-toast" role="status" aria-live="polite" hidden></div>
+      <div class="ai-strip" hidden></div>
       <input class="ts-split" type="range" min="2" max="98" value="50" hidden aria-label="Before and after divider">
     </div>
     <div class="ts-bar">
@@ -282,17 +283,18 @@ export function initStudio(hooks = {}) {
     if (AI.phase === 'idle' && cam.active) AI.phase = 'search'
     if (M && M.alpha > 0.5) AI.lastSeen = now
     let q = frameQuality(M, w, h)
-    // a face that stays turned (an angled laptop, a mirror to the side) is still read after 2.5 s: the measurements are
-    // corrected for the turn (autolook.js), so the person is never stuck waiting
-    if (q === 'straight' || q === 'centre') { AI.turnT ||= now; if (now - AI.turnT > 2500 && Math.abs(M.yaw) < 0.8 && Math.abs(M.pitch) < 0.5 && M.inFrame > 0.9) q = null } else AI.turnT = 0
+    // a face that stays strongly turned or partly out of the picture is still read after 1.5 s (measurements are corrected for
+    // the turn in autolook.js), so nobody is left waiting in front of the mirror
+    if (q === 'straight' || q === 'centre') { AI.turnT ||= now; if (now - AI.turnT > 1500 && Math.abs(M.yaw) < 0.8 && Math.abs(M.pitch) < 0.6 && M.inFrame > 0.8) q = null } else AI.turnT = 0
     AI.q = q
     if (AI.phase === 'search') { if (!q) { AI.phase = 'scan'; AI.reads = []; AI.scanT = now; if (tab === 'auto') renderList() } }
     else if (AI.phase === 'scan') {
-      if (!M && now - AI.lastSeen > 1500) { AI.phase = 'search'; return }
-      if (!q) { try { AI.reads.push(measure(M, raw)) } catch { /* unreadable frame */ } }
-      AI.progress = Math.min(1, AI.reads.length / 20, (now - AI.scanT) / 1400)
-      // tracking that rarely gives a clean frontal view: after 6 s use what there is (or a neutral analysis)
-      if (AI.progress >= 1 || now - AI.scanT > 6000) aiFinishScan()
+      if (!M && now - AI.lastSeen > 1500) { AI.phase = 'search'; if (tab === 'auto') renderList(); return }
+      if (!q) { try { AI.reads.push(measure(M, raw)) } catch (e) { AI.readErr = String(e?.message || e) } }
+      // about 1.2 s and 15 readings (median: one blink, a word or a smile does not change the result); never longer than 3 s
+      const el = now - AI.scanT
+      AI.progress = Math.min(1, AI.reads.length / 15, el / 1200)
+      if (AI.progress >= 1 || (el > 3000 && AI.reads.length >= 4) || el > 6000) aiFinishScan()
     } else if (AI.phase === 'done' && now - AI.lastSeen > 4000) aiAway()
   }
   function aiHint() {
@@ -324,9 +326,34 @@ export function initStudio(hooks = {}) {
     el.querySelector('.ai-go').textContent = AI.err ? 'Try again' : 'Start Makeup Experience'
     if (show) say('')
   }
-  async function aiStart() { AI.err = ''; AI.starting = true; syncIntro(); await start(); AI.starting = false; syncIntro() }
+  // the face model downloads WHILE the camera permission prompt is open (it used to start only after the answer)
+  async function aiStart() { AI.err = ''; AI.starting = true; syncIntro(); loadTracker(); await start(); AI.starting = false; syncIntro() }
 
+  // what is happening right now, stage by stage (camera -> face model -> face -> analysis -> makeup), always visible in AI mode
+  let lastPipe = ''
+  function pipeHtml() {
+    const st = (ok, txt, cls = ok ? 'ok' : 'wait') => `<span class="${cls}">${txt}</span>`
+    const faceOn = !!(M && M.alpha > 0.5)
+    return [
+      st(cam.active, cam.active ? 'Camera on' : 'Camera off'),
+      modelState === 'failed' ? st(false, 'Face model failed', 'bad') : st(modelState === 'ok', modelState === 'ok' ? `Face model ready (${tracker?.__delegate || '?'})` : modelState === 'loading' ? 'Loading face model' : 'Face model starts with the camera'),
+      st(faceOn, faceOn ? 'Face tracked' : 'No face yet'),
+      st(!!AI.A, AI.A ? 'Features read' : AI.phase === 'scan' ? `Reading features ${Math.round(AI.progress * 100)}%` : 'Features not read'),
+      st(!!AI.look && AI.fade > 0.5, AI.look ? `${AI.look.name} on` : AI.removed ? 'Makeup removed' : 'Makeup not applied'),
+    ].join('')
+  }
+  function updatePipe() {
+    if (tab !== 'auto' || !AI.on) return
+    const h = pipeHtml(); if (h === lastPipe) return
+    lastPipe = h; const el = $('.ai-pipe'); if (el) el.innerHTML = h
+  }
+  function renderStrip() {
+    const el = $('.ai-strip'), show = AI.on && tab === 'auto' && cam.active
+    el.hidden = !show; if (!show) return
+    el.innerHTML = OCCASIONS.map((o) => `<button class="${AI.occ === o.id ? 'on' : ''}" data-ai-occ="${o.id}">${o.id === 'auto' ? '&#10022; Auto' : esc(o.label)}</button>`).join('')
+  }
   function renderAuto() {
+    lastPipe = ''; renderStrip()
     const box = $('.ts-auto'), A = AI.A, L = AI.look
     const sw = (p, sel, key) => p.shades.map((s, i) => `<button class="sw${sel === i ? ' on' : ''}" data-${key}="${i}" style="background:${s.c}" title="${esc(s.n)}" aria-label="${esc(p.label)}: ${esc(s.n)}"></button>`).join('')
     const lipSel = state.lipstick ? state.lipstick.shade : -1, eyeSel = state.eyeshadow ? state.eyeshadow.shade : -1
@@ -337,7 +364,7 @@ export function initStudio(hooks = {}) {
         <button class="ai-link" data-ai="rescan">Analyse again</button></div>`
       : `<div class="ai-card"><h3>${AI.phase === 'scan' ? 'Analysing your features...' : 'Waiting for your face'}</h3><p class="ts-note">${cam.active ? 'Sit in front of the camera and look at it for a moment. The look is applied automatically.' : 'Press Start Makeup Experience to turn on the camera.'}</p></div>`
     const cur = L ? `<p class="ai-cur"><b>${esc(L.name)}</b>${L.auto ? ` <span>Auto chose ${esc(L.occasion.label)}: ${esc(L.why)}</span>` : ''}</p>` : AI.removed ? '<p class="ai-cur">Makeup removed. Pick an occasion or press Reset Makeup.</p>' : ''
-    box.innerHTML = `${card}
+    box.innerHTML = `<p class="ai-pipe" aria-live="polite">${pipeHtml()}</p>${card}
       <div class="ts-grp"><h3>Occasion</h3><div class="ts-chips ai-occ">${OCCASIONS.map((o) => `<button class="chip${AI.occ === o.id ? ' on sel' : ''}${o.id === 'auto' ? ' ai-auto' : ''}" data-ai-occ="${o.id}">${o.id === 'auto' ? '&#10022; ' : ''}${esc(o.label)}</button>`).join('')}</div></div>
       ${cur}
       <div class="ai-acts"><button data-ai="another">&#10022; Try another AI look</button><button data-a="compare" class="${compare ? 'on' : ''}">Before / After</button></div>
@@ -358,11 +385,36 @@ export function initStudio(hooks = {}) {
     else if (a === 'off') { const id = el.dataset.aiOff; if (AI.off.has(id)) AI.off.delete(id); else AI.off.add(id); aiApply(false) }
   }
 
-  async function loadTracker() {
+  // Face model: loaded once, with a time limit (slow or blocked connections), the REAL error shown with a Retry button, and a
+  // switch from the GPU to the CPU if detection keeps failing on this device (some phones/drivers create a GPU model that then
+  // throws on every frame: before, each error was silently skipped and the person saw the camera without makeup).
+  let modelState = 'none', modelErr = '', detErr = 0, cpuTried = false
+  const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what} did not load within ${ms / 1000} s (slow or blocked internet connection)`)), ms))])
+  function sayRetry(text) { msg.innerHTML = `<div><p>${esc(text)}</p><button class="ai-go" data-a="retrymodel">Retry</button></div>`; msg.hidden = false }
+  async function loadTracker(opts = {}) {
     if (tracker || trackerTried) return
-    trackerTried = true; say('Loading AI face model...')
-    try { tracker = await createFaceTracker(); say('') }
-    catch { trackerTried = false; say('The AI face model could not load. Check your internet connection and reopen the studio. The camera preview still works.') }
+    trackerTried = true; modelState = 'loading'; modelErr = ''
+    say(opts.cpu ? 'Switching face tracking to the CPU...' : 'Loading the AI face model (about 4 MB, only the first time)...')
+    // slow connections: the runtime (about 9 MB) and the model (about 4 MB) can take minutes on 3G, so the wait is not cut short;
+    // after 20 s the person is told it is still downloading (with the time), and only after 4 minutes is it given up
+    const t0 = performance.now(), slow = setInterval(() => { if (modelState === 'loading' && performance.now() - t0 > 20000) say(`Still downloading the AI face model (slow connection)... ${Math.round((performance.now() - t0) / 1000)} s`) }, 1000)
+    try {
+      tracker = await withTimeout(createFaceTracker(opts), 240000, 'The AI face model')
+      modelState = 'ok'; detErr = 0; say('')
+    } catch (e) {
+      trackerTried = false; modelState = 'failed'; modelErr = String(e?.message || e || 'unknown error').slice(0, 220)
+      sayRetry(`The AI face model could not load, so makeup cannot be applied. Reason: ${modelErr}`)
+    }
+    clearInterval(slow)
+    if (tab === 'auto') renderList()
+  }
+  function detectionFailed(e) {
+    if (++detErr < 20) return
+    detErr = 0
+    if (tracker?.__delegate === 'GPU' && !cpuTried) { cpuTried = true; try { tracker.close() } catch { /* already closed */ } tracker = null; trackerTried = false; loadTracker({ cpu: true }); return }
+    modelState = 'failed'; modelErr = String(e?.message || e).slice(0, 220)
+    sayRetry(`Face tracking stopped working on this device. Reason: ${modelErr}`)
+    try { tracker?.close() } catch { /* already closed */ } tracker = null; trackerTried = false
   }
 
   async function start(fn) {
@@ -379,6 +431,7 @@ export function initStudio(hooks = {}) {
     syncIntro()
   }
   function sync() {
+    if (AI.on) renderStrip()
     btn('start').disabled = cam.active; btn('stop').disabled = !cam.active
     btn('switch').disabled = !cam.active; btn('capture').disabled = !cam.active; btn('download').disabled = !cam.active; btn('compare').disabled = !cam.active
   }
@@ -418,9 +471,9 @@ export function initStudio(hooks = {}) {
       const wants = (k) => need.has(k) || (k === 'hand' && need.has('handOcc')) || (k === 'seg' && need.has('segOcc'))
       ;['pose', 'hand', 'seg'].forEach((k) => wants(k) && ensure(k, !need.has(k)))
       // all models analyse the SAME frame that is drawn below
-      if (tracker && need.has('face')) {
+      if (tracker && need.has('face') && modelState === 'ok') {
         const t0 = performance.now(); let lm = null
-        try { lm = tracker.detectForVideo(vid, now).faceLandmarks[0] || null } catch { /* skipped frame */ }
+        try { if (debug && debugQ.has('failgpu') && tracker.__delegate === 'GPU') throw new Error('simulated GPU failure (?failgpu test)'); lm = tracker.detectForVideo(vid, now).faceLandmarks[0] || null; detErr = 0 } catch (e) { detectionFailed(e) } // one bad frame is skipped; 20 in a row are not
         stat.detMs = stat.detMs * 0.9 + (performance.now() - t0) * 0.1
         M = head.update(lm, w, h, cam.mirror, now)
         const pt = (i) => ({ x: cam.mirror ? w - lm[i].x * w : lm[i].x * w, y: lm[i].y * h })
@@ -490,12 +543,12 @@ export function initStudio(hooks = {}) {
     if (hint.textContent !== hm) hint.textContent = hm
     hint.hidden = !hm
     octx.drawImage(fin, 0, 0)
-    if (AI.on) drawScan(octx, now)
+    if (AI.on) { drawScan(octx, now); if (frameNo % 6 === 0) updatePipe() }
     stat.drawMs = (stat.drawMs || 0) * 0.9 + (performance.now() - tDraw) * 0.1; stat.procMs = (stat.procMs || 0) * 0.9 + (performance.now() - now) * 0.1
     if (newFrame) { perf.ring[perf.n % perf.ring.length] = performance.now() - now; perf.n++ }
     // adaptive budget: if a frame takes longer than the camera interval, run the secondary models less often (never the face)
     if (frameNo % 15 === 0) budgetK = stat.procMs > (phone ? 50 : 38) ? Math.min(4, budgetK + 1) : stat.procMs < (phone ? 28 : 22) ? Math.max(1, budgetK - 1) : budgetK
-    if (debug) window.__glamifyAI = { phase: AI.phase, on: AI.on, look: AI.look?.name || null, occasion: AI.look?.occasion.id || null, A: AI.A, fade: +AI.fade.toFixed(2), reads: AI.reads.length, k: AI.k, state: JSON.parse(JSON.stringify(state)), P: M ? M.P.map((p) => [+p.x.toFixed(1), +p.y.toFixed(1)]) : null, canvases: { raw, fin } }
+    if (debug) window.__glamifyAI = { q: AI.q, pitchDeg: M ? +(M.pitch * 57.3).toFixed(1) : null, rollDeg: M ? +(M.roll * 57.3).toFixed(1) : null, sizeK: M ? +(M.fw3 / Math.min(w, h)).toFixed(2) : null, inFrame: M ? +M.inFrame.toFixed(2) : null, phase: AI.phase, on: AI.on, look: AI.look?.name || null, occasion: AI.look?.occasion.id || null, A: AI.A, fade: +AI.fade.toFixed(2), reads: AI.reads.length, k: AI.k, state: JSON.parse(JSON.stringify(state)), P: M ? M.P.map((p) => [+p.x.toFixed(1), +p.y.toFixed(1)]) : null, canvases: { raw, fin } }
     if (debug) { if (debugDraw) drawDebug(w, h, need); window.__glamify = { perf: perfSummary(), cam: stat.cam, models: Object.keys(models).filter((k) => models[k].t), need: [...need], hint: hint.hidden ? '' : hint.textContent, neck: M && M.shoulders !== undefined ? !!M.shoulders : null, frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, faceJumpsHeld: head.jumps, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), mesh: !!mesh && mesh.ok, hairPath: stat.hairPath || null, j3: j3.r ? 'on' : j3.r === false ? 'failed' : 'off', light: light.value.ok ? { x: +light.value.dir.x.toFixed(2), y: +light.value.dir.y.toFixed(2), z: +light.value.dir.z.toFixed(2), contrast: +light.value.contrast.toFixed(2), tint: light.value.tint.map((v) => +v.toFixed(2)), bright: +light.value.bright.toFixed(2) } : null, hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, person: !!person, personMs: +(stat.personMs || 0).toFixed(1), outfitPath: outfitRenderer(), bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
     if (compare) {
       const x = (w * split.value) / 100
@@ -656,6 +709,7 @@ export function initStudio(hooks = {}) {
   async function action(a) {
     if (a === 'close') close()
     else if (a === 'aistart') aiStart()
+    else if (a === 'retrymodel') { say(''); loadTracker() }
     else if (a === 'start') start()
     else if (a === 'stop') stop()
     else if (a === 'switch') { try { await cam.switch(); resetTracking() } catch (e) { say(describeError(e)); setTimeout(() => say(''), 2500) } }
@@ -675,7 +729,7 @@ export function initStudio(hooks = {}) {
     root.querySelectorAll('.ts-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab))
     root.hidden = false; document.body.classList.add('studio-open'); renderList(); sync()
     root.scrollTop = 0; hooks.onOpen?.()
-    if (opts.mode === 'auto' && !cam.active) { $('.ai-go').focus({ preventScroll: true }); return }
+    if (opts.mode === 'auto') { if (!cam.active) aiStart(); return } // one click: the camera prompt comes straight away
     $('.ts-x').focus({ preventScroll: true })
     start() // runs from the tap on "Try It On", so the browser allows the camera prompt
   }

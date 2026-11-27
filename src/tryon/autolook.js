@@ -42,11 +42,14 @@ function patchColor(ctx, pts, r, W, H, q = 0.5) { // q: which percentile (0.5 = 
 
 // ---------- 1. one reading ----------
 // quality: why a frame is not used (shown to the person as guidance); null = good frame
+// Real people at a laptop or phone look at the SCREEN, not the lens: 15-25 deg of turn and some tilt are normal. Readings are
+// corrected for the turn (measure), so frames up to ~29 deg are used. (Update 18 used 17 deg: on a test video of a person
+// sitting at 20 deg, 60% of frames were rejected and the look took 14 s to appear.)
 export function frameQuality(M, W, H) {
   if (!M || M.alpha < 0.6) return 'face'
-  if (M.fw3 / Math.min(W, H) < 0.16) return 'closer'
-  if (M.inFrame < 0.98) return 'centre'
-  if (Math.abs(M.yaw) > 0.3 || Math.abs(M.pitch) > 0.35 || Math.abs(M.roll) > 0.35) return 'straight'
+  if (M.fw3 / Math.min(W, H) < 0.12) return 'closer'
+  if (M.inFrame < 0.9) return 'centre'
+  if (Math.abs(M.yaw) > 0.5 || Math.abs(M.pitch) > 0.5 || Math.abs(M.roll) > 0.5) return 'straight'
   return null
 }
 
@@ -114,24 +117,24 @@ const contourShade = (A) => (A.depth === 'light' ? 'Light' : A.depth === 'medium
 
 export const OCCASIONS = [
   { id: 'auto', label: 'Auto Makeup', note: 'AI picks the look' },
-  { id: 'natural', label: 'Natural Everyday', looks: [
-    { name: 'Fresh natural', items: (A) => [...base(A, 0.32), ['blush', softBlush, 0.3], ['eyeshadow', 'Nude', 0.3], ['mascara', 'Brown', 0.55], ['brows', A.brows, 0.4], ['lipstick', nude, 0.4], ['gloss', 'Clear', 0.35]] },
-    { name: 'Soft peach', items: (A) => [...base(A, 0.3), ['blush', 'Peach', 0.35], ['eyeshadow', 'Peach', 0.3], ['mascara', 'Black', 0.5], ['brows', A.brows, 0.4], ['lipstick', 'Coral', 0.35], ['gloss', 'Peach', 0.3]] },
+  { id: 'natural', label: 'Natural', looks: [
+    { name: 'Fresh natural', items: (A) => [...base(A, 0.38), ['blush', softBlush, 0.42], ['eyeshadow', 'Nude', 0.4], ['eyeliner', 'Brown', 0.55, { wing: 0.3 }], ['mascara', 'Black', 0.7], ['brows', A.brows, 0.5], ['lipstick', (A2) => (A2.depth === 'deep' ? 'Brown' : 'Pink'), 0.5], ['gloss', 'Clear', 0.4]] },
+    { name: 'Soft peach', items: (A) => [...base(A, 0.38), ['blush', 'Peach', 0.45], ['eyeshadow', 'Peach', 0.42], ['eyeliner', 'Brown', 0.55, { wing: 0.3 }], ['mascara', 'Black', 0.7], ['brows', A.brows, 0.5], ['lipstick', 'Coral', 0.55], ['gloss', 'Peach', 0.4]] },
   ] },
   { id: 'office', label: 'Office', looks: [
-    { name: 'Polished office', items: (A) => [...base(A, 0.42), ['contour', contourShade, 0.25], ['blush', softBlush, 0.3], ['eyeshadow', 'Brown', 0.35], ['eyeliner', 'Brown', 0.6, { wing: 0.5 }], ['mascara', 'Black', 0.6], ['brows', A.brows, 0.55], ['lipstick', nude, 0.55]] },
-    { name: 'Rose meeting', items: (A) => [...base(A, 0.4), ['blush', 'Rose', 0.3], ['eyeshadow', 'Nude', 0.35], ['eyeliner', 'Black', 0.5, { wing: 0.4 }], ['mascara', 'Black', 0.6], ['brows', A.brows, 0.5], ['lipstick', 'Pink', 0.45]] },
+    { name: 'Polished office', items: (A) => [...base(A, 0.45), ['contour', contourShade, 0.3], ['blush', softBlush, 0.4], ['eyeshadow', 'Brown', 0.45], ['eyeliner', 'Black', 0.75, { wing: 0.6 }], ['mascara', 'Black', 0.8], ['brows', A.brows, 0.55], ['lipstick', (A2) => (A2.depth === 'deep' ? 'Brown' : 'Pink'), 0.6], ['gloss', 'Clear', 0.3]] },
+    { name: 'Rose meeting', items: (A) => [...base(A, 0.42), ['blush', 'Rose', 0.42], ['eyeshadow', 'Nude', 0.45], ['eyeliner', 'Black', 0.7, { wing: 0.5 }], ['mascara', 'Black', 0.8], ['brows', A.brows, 0.55], ['lipstick', 'Pink', 0.62]] },
   ] },
   { id: 'party', label: 'Party', looks: [
     { name: 'Night out', items: (A) => [...base(A), ['contour', contourShade, 0.4], ['blush', warmBlush, 0.4], ['highlighter', glow, 0.6], ['eyeshadow', 'Smokey', 0.55], ['eyeliner', 'Black', 0.9, { wing: 1.2 }], ['mascara', 'Black', 0.9], ['brows', A.brows, 0.65], ['lipstick', 'Pink', 0.7], ['gloss', 'Pink', 0.45]] },
     { name: 'Purple party', items: (A) => [...base(A), ['contour', contourShade, 0.35], ['blush', 'Mauve', 0.4], ['highlighter', glow, 0.55], ['eyeshadow', 'Purple', 0.55], ['eyeliner', 'Black', 0.85, { wing: 1.1 }], ['mascara', 'Black', 0.9], ['brows', A.brows, 0.6], ['lipstick', 'Maroon', 0.6]] },
   ] },
   { id: 'glam', label: 'Glam', looks: [
-    { name: 'Red carpet glam', items: (A) => [...base(A, 0.5), ['contour', contourShade, 0.55], ['blush', warmBlush, 0.45], ['highlighter', glow, 0.75], ['eyeshadow', 'Smokey', 0.65], ['eyeliner', 'Black', 1, { wing: 1.5 }], ['mascara', 'Black', 1], ['brows', A.brows, 0.75], ['lipstick', 'Red', 0.85]] },
+    { name: 'Red carpet glam', items: (A) => [...base(A, 0.5), ['contour', contourShade, 0.55], ['blush', warmBlush, 0.45], ['highlighter', glow, 0.75], ['eyeshadow', 'Smokey', 0.65], ['eyeliner', 'Black', 1, { wing: 1.5 }], ['mascara', 'Black', 1], ['brows', A.brows, 0.75], ['lipstick', 'Red', 0.92]] },
     { name: 'Bronze glam', items: (A) => [...base(A, 0.5), ['contour', contourShade, 0.55], ['blush', 'Coral', 0.4], ['highlighter', 'Gold', 0.75], ['eyeshadow', 'Golden', 0.6], ['eyeliner', 'Brown', 1, { wing: 1.4 }], ['mascara', 'Black', 1], ['brows', A.brows, 0.7], ['lipstick', 'Brown', 0.75], ['gloss', 'Clear', 0.4]] },
   ] },
-  { id: 'wedding', label: 'Wedding', looks: [
-    { name: 'Golden wedding', items: (A) => [...base(A, 0.48), ['contour', contourShade, 0.4], ['blush', warmBlush, 0.45], ['highlighter', glow, 0.65], ['eyeshadow', 'Golden', 0.55], ['eyeliner', 'Black', 0.95, { wing: 1.2 }], ['mascara', 'Black', 0.95], ['brows', A.brows, 0.7], ['lipstick', bridalRed, 0.8]] },
+  { id: 'wedding', label: 'Wedding Guest', looks: [
+    { name: 'Golden wedding', items: (A) => [...base(A, 0.48), ['contour', contourShade, 0.4], ['blush', warmBlush, 0.45], ['highlighter', glow, 0.65], ['eyeshadow', 'Golden', 0.55], ['eyeliner', 'Black', 0.95, { wing: 1.2 }], ['mascara', 'Black', 0.95], ['brows', A.brows, 0.7], ['lipstick', bridalRed, 0.9]] },
     { name: 'Rose gold wedding', items: (A) => [...base(A, 0.46), ['contour', contourShade, 0.35], ['blush', 'Rose', 0.45], ['highlighter', 'Champagne', 0.65], ['eyeshadow', 'Pink', 0.5], ['eyeliner', 'Brown', 0.85, { wing: 1.1 }], ['mascara', 'Black', 0.9], ['brows', A.brows, 0.65], ['lipstick', 'Pink', 0.7], ['gloss', 'Pink', 0.35]] },
   ] },
   { id: 'bridal', label: 'Bridal', looks: [
@@ -143,7 +146,7 @@ export const OCCASIONS = [
     { name: 'Peach engagement', items: (A) => [...base(A, 0.46), ['contour', contourShade, 0.3], ['blush', 'Peach', 0.45], ['highlighter', glow, 0.7], ['eyeshadow', 'Peach', 0.5], ['eyeliner', 'Black', 0.85, { wing: 1.1 }], ['mascara', 'Black', 0.9], ['brows', A.brows, 0.6], ['lipstick', 'Coral', 0.65], ['gloss', 'Peach', 0.45]] },
   ] },
   { id: 'diwali', label: 'Diwali', looks: [
-    { name: 'Diwali glow', items: (A) => [...base(A, 0.45), ['contour', contourShade, 0.35], ['blush', warmBlush, 0.45], ['highlighter', 'Gold', 0.85], ['eyeshadow', 'Golden', 0.65], ['eyeliner', 'Black', 0.95, { wing: 1.25 }], ['mascara', 'Black', 0.95], ['brows', A.brows, 0.65], ['lipstick', (A2) => (A2.depth === 'deep' ? 'Maroon' : 'Red'), 0.8]] },
+    { name: 'Diwali glow', items: (A) => [...base(A, 0.45), ['contour', contourShade, 0.35], ['blush', warmBlush, 0.45], ['highlighter', 'Gold', 0.85], ['eyeshadow', 'Golden', 0.65], ['eyeliner', 'Black', 0.95, { wing: 1.25 }], ['mascara', 'Black', 0.95], ['brows', A.brows, 0.65], ['lipstick', (A2) => (A2.depth === 'deep' ? 'Maroon' : 'Red'), 0.92]] },
     { name: 'Festive coral', items: (A) => [...base(A, 0.45), ['blush', 'Coral', 0.45], ['highlighter', 'Gold', 0.8], ['eyeshadow', 'Shimmer', 0.6], ['eyeliner', 'Black', 0.9, { wing: 1.2 }], ['mascara', 'Black', 0.9], ['brows', A.brows, 0.6], ['lipstick', 'Coral', 0.75], ['gloss', 'Peach', 0.4]] },
   ] },
   { id: 'holi', label: 'Holi', looks: [
@@ -184,6 +187,11 @@ function adapt(id, st, A) {
   }[A.faceShape] || {})
 }
 
+// Every look is COMPLETE: the products a look does not list are added at a light, natural level, so face (foundation,
+// concealer, contour, blush, highlighter), eyes (shadow, liner, mascara, brows) and lips (lipstick, gloss) are always all on.
+const COMPLETE = (A) => [['foundation', A.foundation, 0.35], ['concealer', Math.min(2, Math.max(0, A.foundation - 1)), 0.28], ['contour', contourShade, 0.22], ['blush', softBlush, 0.32],
+  ['highlighter', glow, 0.4], ['eyeshadow', 'Nude', 0.35], ['eyeliner', 'Brown', 0.55, { wing: 0.35 }], ['mascara', 'Black', 0.65], ['brows', A.brows, 0.45], ['lipstick', nude, 0.55], ['gloss', 'Clear', 0.3]]
+
 // -> { name, occasion, why, state: { id: { shade, v, ...} }, ids }
 // opts: k (overall intensity), lip / eye (shade index chosen by the person), off (Set of product ids switched off)
 export function buildLook(occId, variant, A, opts = {}) {
@@ -191,7 +199,9 @@ export function buildLook(occId, variant, A, opts = {}) {
   if (occ.id === 'auto') { const pick = autoOccasion(opts.now); occ = findOccasion(pick.id); why = pick.why }
   const look = occ.looks[((variant % occ.looks.length) + occ.looks.length) % occ.looks.length]
   const k = opts.k ?? 1, state = {}
-  for (const [id, shade, v, extra] of look.items(A)) {
+  const items = look.items(A), have = new Set(items.map((x) => x[0]))
+  for (const it of COMPLETE(A)) if (!have.has(it[0])) items.push(it)
+  for (const [id, shade, v, extra] of items) {
     const sv = typeof shade === 'function' ? shade(A) : shade
     const st = { shade: typeof sv === 'number' ? clamp(sv, 0, prod(id).shades.length - 1) : shadeIx(id, sv), v, ...(extra || {}) }
     adapt(id, st, A)

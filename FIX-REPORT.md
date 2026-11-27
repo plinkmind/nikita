@@ -1,3 +1,44 @@
+# Update 19: AI Automatic Makeup - debugged and fixed
+The whole pipeline was traced stage by stage (camera -> model loading -> face detection -> landmarks -> analysis -> look ->
+makeup state -> rendering) in the PRODUCTION configuration (GPU first, hair and hand occlusion on, models served by the site),
+with real-face videos as the camera. The earlier test had forced the CPU and had no hair/hand models, so it missed these.
+
+**Bugs found and fixed**
+1. **Analysis waited for a perfectly straight face.** Frames turned more than 17 deg were thrown away. People at a laptop or
+   phone look at the screen, not the lens (measured: 20 deg on a real-person video), so 60% of frames were rejected and the look
+   took **14 s** to appear (it looked broken). Now frames up to ~29 deg are used (measurements are corrected for the turn), a
+   strongly turned face is still read after 1.5 s, and the reading takes ~1.2 s (never more than 3 s). Result: makeup on
+   **4.5 s after one click**, including loading the model.
+2. **Silent face-detection failures.** Every detection error was skipped without a trace. On devices where the GPU model loads
+   but fails on every frame, the person saw the camera with no makeup forever. Now 20 failures in a row switch to the CPU
+   automatically; if that fails too, the real error is shown with a Retry button.
+3. **Model loading errors were generic, with no retry**, and a slow connection had no feedback. Now the actual reason is shown
+   ("Reason: Failed to fetch", a timeout...), with Retry; slow connections show "Still downloading... N s" (tested at 1.6 Mbps:
+   66 s, then it works). The model starts downloading while the camera permission prompt is open.
+4. **Models depended on storage.googleapis.com at runtime** (blocked by some ad blockers, company networks and ISPs). The build
+   now downloads them into the site (`scripts/fetch-models.mjs`, run by `npm run build` and `npm run dev`; never fails the build)
+   and the site serves them itself, with Google as the fallback.
+5. **Two clicks to start, and an easy-to-miss entry.** "✦ Start AI Automatic Makeup" is now the primary gold button on the first
+   screen, the beauty chapter and the finale (plus "✦ AI Makeup" in the header on wide screens). One click opens the studio on the
+   AI Makeup tab and asks for the camera immediately.
+6. **Daytime Auto look was nearly invisible** (nude "Polished office"): it read as "camera without makeup". Everyday looks are now
+   clearly visible, and **every look is complete**: foundation, concealer, contour, blush, highlighter, eyeshadow, eyeliner,
+   mascara, brows, lipstick and gloss (plus primer). Red lipstick in festive / bridal looks is applied deeper (it read as pink
+   in warm light).
+7. **Occasion change needed scrolling on phones.** Occasions are now a strip ON the camera view.
+8. **No way to see what was happening.** A status line shows each stage: Camera on, Face model ready (GPU/CPU), Face tracked,
+   Features read, Look on.
+
+**Files changed**: src/tryon/studio.js, src/tryon/autolook.js, src/tryon/track/mediapipe.js, src/tryon/tryon.css, src/main.js,
+src/style.css, index.html, scripts/fetch-models.mjs, vite.config.js, package.json, netlify.toml.
+Not changed: makeup.js, head.js, masks.js, facemesh.js, tint.js, jewellery, nails, hair, outfits, AI photo, backend, accounts.
+
+**Models (nothing to do on Netlify)**: the Netlify build downloads them automatically. On your computer `npm run dev` / `npm run
+build` does the same (needs internet once). Without internet the site falls back to Google's storage, as before.
+Test hooks (only with `?debug`): `?debug=stats` exposes the AI state for automated tests; `&failgpu` simulates a broken GPU.
+
+---
+
 # Update 18: AI Automatic Makeup mirror
 A person sits in front of the camera; the mirror finds the face, reads the features and applies a complete makeup look live.
 Built on the existing studio: same camera (camera.js), same face tracker (MediaPipe Face Landmarker + track/head.js), same

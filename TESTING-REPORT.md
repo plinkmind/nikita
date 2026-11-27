@@ -1,5 +1,37 @@
 # Testing report
 
+## Update 19: AI Automatic Makeup debugging
+
+**Not verified with a real webcam or a real phone.** This environment has no camera. All camera tests use Chrome's fake camera
+fed with real-person videos, running the real MediaPipe models in the production build (GPU first, CPU fallback, hair and hand
+occlusion on). That checks the whole software pipeline on real faces, but it is not proof on real hardware: please run the
+checklist below on Desktop Chrome, Android Chrome and iPhone Safari.
+
+Test faces: `bridal-ring.mp4` (a real woman, phone-shaped 720x1280: turning, smiling, open mouth, hand near the face),
+the moving test portrait (desktop), `hero-earring.mp4` (head turned 26-44 deg).
+
+| Test | Before (Update 18) | After |
+|---|---|---|
+| Click -> makeup fully on (production build, phone size) | 14 s (analysis stuck on a 20 deg head turn) | **4.5 s** (face found 1.5 s, features read ~1.2 s, fade 0.45 s) |
+| Same, desktop portrait | 3.2 s (+ a second click) | 4.5 s including model load, one click |
+| Products in every look | 7-11 | 12 (all 11 asked for + primer), all 10 occasions |
+| Wedding Guest -> Diwali (from the strip on the camera) | - | whole look replaced (7 of 12 products change shade/strength) |
+| Makeup outside the face (frontal portrait) | 0% | 0% |
+| Lips: colour change inside vs a ring around them | - | 102 vs 12 (bridal video), 49 vs 10 (portrait) |
+| Expressions on bridal video (open mouth, smile, turn, hand near face) | - | lips follow the mouth, teeth stay clean; makeup stops when the face leaves the picture (no floating) |
+| Capture / Download | pass | pass (PNG 650-730 KB) |
+| Face model blocked | generic message, reopen studio | real reason + Retry; Retry works when reachable |
+| GPU fails on every frame (simulated) | camera without makeup, no message | switches to CPU, makeup on at 6 s |
+| Slow internet 1.6 Mbps, empty cache | (60 s limit would fail) | "Still downloading... N s", model ready at 66 s, makeup on at 70 s |
+| Camera blocked / no camera | message | message on the start screen + Try again |
+| Existing categories (makeup, nails, 2D + 3D jewellery, hair colour, outfit) | - | unchanged (tests/e2e/categories.e2e.mjs) |
+| Website at 6 sizes / backend suite | - | pass / 55 of 55 |
+
+**Checklist for a real device** (open the site, press "✦ Start AI Automatic Makeup"): camera prompt appears at once; status line
+reaches "Face model ready", "Face tracked", "Features read", "<look> on" within a few seconds; makeup visible on lips, eyes,
+cheeks; turn, nod, blink, smile, open the mouth: makeup stays on; tap Wedding Guest then Diwali on the camera strip: the look
+changes; Capture Photo, Download. If a stage stays grey or red, the status line and message say which one and why.
+
 ## Update 18: AI Automatic Makeup
 
 Real MediaPipe Face Landmarker, headless Chromium with a fake camera, two real-face videos: (1) the test portrait moving

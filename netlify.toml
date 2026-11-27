@@ -22,3 +22,9 @@
   for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+
+# MediaPipe AI models (downloaded at build time by scripts/fetch-models.mjs): large and never change at the same address
+[[headers]]
+  for = "/models/*"
+  [headers.values]
+    Cache-Control = "public, max-age=2592000"

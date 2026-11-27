@@ -20,8 +20,8 @@ const ACCENTS = [
 ]
 // Edit the story here. crop = how a landscape video is cropped into the portrait mirror.
 const CH = [
-  { k: 'Glamify XR smart mirror', h: 'The future of luxury, reflected.', p: 'Clients try on makeup, couture and fine jewelry in real time, right inside your boutique.', bg: 'hero-earring', color: '#1c1118', cta: 'Try the AI makeup mirror' },
-  { k: '01 · Beauty and makeup', h: 'Flawless color, on her.', p: 'Sit in front of the mirror and AI reads her features, then applies a complete look live: foundation to lipstick, for a wedding, Diwali or the office.', video: 'beauty-tryon', prop: 'lipstick', color: '#3b1624', cta: 'AI makeup on your face' },
+  { k: 'Glamify XR smart mirror', h: 'The future of luxury, reflected.', p: 'Clients try on makeup, couture and fine jewelry in real time, right inside your boutique.', bg: 'hero-earring', color: '#1c1118', cta: 'Start AI Automatic Makeup' },
+  { k: '01 · Beauty and makeup', h: 'Flawless color, on her.', p: 'Sit in front of the mirror and AI reads her features, then applies a complete look live: foundation to lipstick, for a wedding, Diwali or the office.', video: 'beauty-tryon', prop: 'lipstick', color: '#3b1624', cta: 'Start AI Automatic Makeup' },
   { k: '02 · Fashion and apparel', h: 'An endless wardrobe.', p: 'Garments follow her shoulders, arms and turns in the live mirror, and a realistic AI photo shows how they look on her. A digital wardrobe, right in the fitting area.', video: 'fashion-gown', prop: 'cloth', color: '#14203a' },
   { k: '03 · Jewelry and luxury', h: 'Every facet, alive.', p: 'Earrings and necklaces in 3D, with sparkle that reacts to the light in the room and follows every turn of her head.', video: 'bridal-ring', prop: 'gem', color: '#2c2210' },
   { k: 'Technology', h: 'Live. Private. No app.', p: 'Face, hand, hair and body tracking run in real time on the device, so the camera picture never leaves it. Nothing to install: it opens in the browser.', prop: 'rings', color: '#0d2a2a' },
@@ -120,7 +120,7 @@ scene.add(new THREE.Points(dustGeo, dustMat))
 /* ---------- html overlay ---------- */
 const FINALE = `
   <div class="sw" id="sw">${ACCENTS.map((a, i) => `<button type="button" data-c="${a.c}" style="background:${a.c}" class="${i ? '' : 'on'}" aria-label="${a.n}" title="${a.n}"></button>`).join('')}</div>
-  <div class="ctas"><button type="button" class="tryon-cta" data-tryon>Try it on live</button><button type="button" class="tryon-cta ai" data-aitryon>See it on you (AI photo)</button></div>
+  <div class="ctas"><button type="button" class="tryon-cta ai-mk" data-automakeup>&#10022; Start AI Automatic Makeup</button><button type="button" class="tryon-cta" data-tryon>Try it on live</button><button type="button" class="tryon-cta ai" data-aitryon>See it on you (AI photo)</button></div>
   <form id="demoForm" novalidate>
     <input type="email" name="email" placeholder="Your work email" autocomplete="email" required aria-label="Your work email">
     <input type="text" name="boutique" placeholder="Boutique or brand (optional)" autocomplete="organization" maxlength="120" aria-label="Boutique or brand">

@@ -5,7 +5,12 @@
 //    official model storage as the fallback. Nothing is downloaded until a product that needs it is applied.
 
 const GOOGLE = 'https://storage.googleapis.com/mediapipe-models/'
-const BASE = (import.meta.env.VITE_MODEL_BASE || '').trim()
+// Models are served by the site itself when the build downloaded them (scripts/fetch-models.mjs runs before every build;
+// vite.config.js sets __LOCAL_MODELS__), with Google's model storage as the fallback. Self-hosting means the AI makeup does
+// not depend on storage.googleapis.com being reachable (ad blockers, company networks and some ISPs block it).
+// eslint-disable-next-line no-undef
+const LOCAL = typeof __LOCAL_MODELS__ !== 'undefined' && __LOCAL_MODELS__ ? (import.meta.env.BASE_URL || '/') + 'models/' : ''
+const BASE = (import.meta.env.VITE_MODEL_BASE || LOCAL).trim()
 const WASM = (import.meta.env.BASE_URL || '/') + 'mediapipe/wasm'
 // VITE_DELEGATE=CPU forces the CPU (used by the automated tests, which have no real GPU)
 const DELEGATES = import.meta.env.VITE_DELEGATE ? [import.meta.env.VITE_DELEGATE] : ['GPU', 'CPU']
@@ -28,11 +33,11 @@ const urls = (p) => [...new Set([BASE && BASE + p, GOOGLE + p].filter(Boolean))]
 let visionP
 export const vision = () => visionP || (visionP = import('@mediapipe/tasks-vision').then(async (m) => ({ m, files: await m.FilesetResolver.forVisionTasks(WASM) })).catch((e) => { visionP = null; throw e }))
 
-async function make(name, opts, path) {
+async function make(name, opts, path, delegates = DELEGATES) {
   const { m, files } = await vision()
   let last
   for (const modelAssetPath of urls(path)) {
-    for (const delegate of DELEGATES) { // GPU is much faster; some phones/browsers only work on CPU
+    for (const delegate of delegates) { // GPU is much faster; some phones/browsers only work on CPU
       try { const t = await m[name].createFromOptions(files, { ...opts, baseOptions: { modelAssetPath, delegate } }); t.__delegate = delegate; return t }
       catch (e) { last = e }
     }
@@ -40,10 +45,11 @@ async function make(name, opts, path) {
   throw last || new Error('model failed to load')
 }
 
-export const createFaceTracker = () => make('FaceLandmarker', {
+// { cpu: true }: CPU only (used when the GPU model was created but fails on every frame on this device)
+export const createFaceTracker = (o = {}) => make('FaceLandmarker', {
   runningMode: 'VIDEO', numFaces: 1,
   minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.6, minTrackingConfidence: 0.5,
-}, MODEL_PATHS.face)
+}, MODEL_PATHS.face, o.cpu ? ['CPU'] : DELEGATES)
 
 // phones use the lite body model (fast); computers use the full model (more accurate shoulders, elbows and hips)
 export const createPoseTracker = (seg = true) => make('PoseLandmarker', {

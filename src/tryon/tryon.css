@@ -220,3 +220,19 @@ a.chip{text-decoration:none;color:inherit}
   .ai-intro ol,.ai-intro small{display:none}
   .ai-intro h3{font-size:22px}
 }
+/* Update 19: pipeline status (what is happening now) and occasion strip on the camera view */
+.ai-pipe{margin:0;display:flex;flex-wrap:wrap;gap:6px}
+.ai-pipe span{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;border:1px solid rgba(255,255,255,.18);color:#D3CABD}
+.ai-pipe span::before{content:"";width:7px;height:7px;border-radius:50%;background:#6b6f78}
+.ai-pipe .ok{border-color:rgba(120,200,140,.55);color:#F7F1E8}.ai-pipe .ok::before{background:#6fd08c}
+.ai-pipe .wait::before{background:#E2BE7C;animation:aiPulse 1.2s ease-in-out infinite}
+.ai-pipe .bad{border-color:rgba(240,120,120,.7);color:#ffd7d7}.ai-pipe .bad::before{background:#f07878}
+@keyframes aiPulse{50%{opacity:.3}}
+.ai-strip{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:28px 10px 10px;background:linear-gradient(0deg,rgba(6,8,12,.75),transparent)}
+.ai-strip::-webkit-scrollbar{display:none}
+.ai-strip[hidden]{display:none}
+.ai-strip button{flex:0 0 auto;min-height:36px;padding:6px 13px;border-radius:999px;border:1px solid rgba(255,255,255,.35);background:rgba(11,14,20,.6);color:#F7F1E8;font-size:13px;cursor:pointer;backdrop-filter:blur(6px)}
+.ai-strip button.on{background:#E2BE7C;border-color:#E2BE7C;color:#0B0E14;font-weight:600}
+.ai-toast{bottom:64px}
+.ts-msg .ai-go{margin-top:12px}
+.ts-msg p{margin:0}
