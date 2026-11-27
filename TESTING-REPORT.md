@@ -1,5 +1,25 @@
 # Testing report
 
+## Update 18: AI Automatic Makeup
+
+Real MediaPipe Face Landmarker, headless Chromium with a fake camera, two real-face videos: (1) the test portrait moving
+(turning +-7 deg, zooming, sliding), (2) `hero-earring.mp4`, a real woman turning her head 26-44 deg.
+
+| Test | Result |
+|---|---|
+| Start -> face found -> look applied (portrait, desktop) | analysis starts 1.0 s after Start, look fully on at 3.2 s |
+| Same, turned face, phone size 390x844 | analysis starts 3.4 s (waits 2.5 s for a straight look, then reads the turned face), look on at 5.8 s |
+| All 10 occasions, portrait | each applies its complete look (10-12 products); makeup changes outside the face outline: **0%** for every look |
+| Lip alignment (Bridal, portrait) | colour change inside the lips 222 vs 12 in a ring around them |
+| Turned face (hero video) | primer smeared the nose edge into the background: fixed (primer mask from the 3D face mesh); lips, eyes, brows on target (checked on difference maps) |
+| Controls | Try another look, intensity, lipstick shade, eyeshadow shade, effect on/off, Before/After, Remove all, Reset, Capture, Save Look: all pass |
+| Camera blocked / no camera API | clear message on the start screen + Try again, no page errors |
+| Face away 4 s | look fades out, face read again; same person gets the look back |
+| Existing categories (makeup, nails, 2D + 3D jewellery, hair colour, outfit) | unchanged behaviour (tests/e2e/categories.e2e.mjs) |
+| Website at 6 screen sizes, backend suite | pass / 55 of 55 |
+| Frame time in this sandbox (2 CPU cores, no GPU, CPU model delegate) | 108 ms median: not representative; real phones use the GPU delegate |
+| **Not tested** | a real person and a real phone; blinking and smiling with measured ground truth (the test videos have little of either); darker skin tones and hooded eyes on real faces |
+
 ## Update 17: website improvements
 
 | Test | Result |

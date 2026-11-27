@@ -21,6 +21,9 @@ export const MAKEUP = [
   { id: 'lipstick', label: 'Lipstick', v: 0.75, shades: [sh('Red', '#B3122E'), sh('Nude', '#C58E7C'), sh('Pink', '#E0508A'), sh('Brown', '#7A4332'), sh('Maroon', '#6E1226'), sh('Coral', '#F0674E')] },
   { id: 'gloss', label: 'Lip Gloss', v: 0.7, shades: [sh('Clear', '#ffffff'), sh('Pink', '#ffc2d6'), sh('Peach', '#ffd0b8')] },
   { id: 'highlighter', label: 'Highlighter', v: 0.6, shades: [sh('Champagne', '#fff0cf'), sh('Pearl', '#ffffff'), sh('Gold', '#ffd98a')] },
+  // contour: soft shading under the cheekbones, at the temples and along the jaw. The optional state fields cheek / jaw /
+  // forehead / chin (0..1.5, default 1) let the AI look engine (autolook.js) shape it for the face, like a make-up artist would.
+  { id: 'contour', label: 'Contour', v: 0.4, shades: [sh('Light', '#A27C66'), sh('Medium', '#84593F'), sh('Deep', '#573626')] },
 ]
 
 // MediaPipe face-mesh landmark groups
@@ -74,16 +77,23 @@ const scratch = (W, H, k = 0) => {
 }
 
 const DRAW = {
-  primer(c, M, s, v, raw) { // blurs skin texture inside the face (not eyes, lips, brows)
+  primer(c, M, s, v, raw, st, mesh) { // blurs skin texture inside the face (not eyes, lips, brows)
     const { P, W, H, fw } = M
     // light smoothing only (a strong blur makes the face look smeared): 1/3 resolution, low opacity, soft mask edge
     const [small, sx] = scratch(Math.round(W / 3), Math.round(H / 3), 0); sx.drawImage(raw, 0, 0, small.width, small.height)
     const [big, bx] = scratch(W, H, 1); bx.imageSmoothingQuality = 'high'; bx.drawImage(small, 0, 0, W, H)
     const [mask, mx] = scratch(W, H, 2)
-    const holes = [...EYES.map((e) => e.loop.map((i) => P[i])), LIPS_OUT.map((i) => P[i]), ...BROWS.map((b) => [...b.up, ...b.low.slice().reverse()].map((i) => P[i]))]
-    soft(mx, [OVAL.map((i) => P[i]), ...holes], '#000', fw * 0.08, 1, 'source-over', 'evenodd')
+    // With the 3D face mesh, the mask is the visible skin only (depth test + fade on surfaces seen edge-on). The flat outline
+    // reaches past the nose on a turned head and smeared the profile edge into the background.
+    let k = 1
+    if (!(mesh && mesh.draw(mx, mesh.texture('primer:mask', (x, S) => MESH_PRIMER_MASK(x, S)), [['source-over', 1]]))) {
+      const holes = [...EYES.map((e) => e.loop.map((i) => P[i])), LIPS_OUT.map((i) => P[i]), ...BROWS.map((b) => [...b.up, ...b.low.slice().reverse()].map((i) => P[i]))]
+      soft(mx, [OVAL.map((i) => P[i]), ...holes], '#000', fw * 0.08, 1, 'source-over', 'evenodd')
+      k = 1 - Math.min(1, Math.max(0, (Math.abs(M.yaw || 0) - 0.2) / 0.35)) // 2D fallback: fades out as the head turns
+      if (k < 0.01) return
+    }
     bx.globalCompositeOperation = 'destination-in'; bx.drawImage(mask, 0, 0)
-    c.save(); c.globalAlpha = v * 0.38; c.drawImage(big, 0, 0); c.restore()
+    c.save(); c.globalAlpha = v * 0.38 * k; c.drawImage(big, 0, 0); c.restore()
   },
   foundation(c, M, s, v) {
     const { P, fw } = M
@@ -123,20 +133,23 @@ const DRAW = {
       const w = d(P[e.out], P[e.inn]), top = e.up.map((i) => P[i]), brow = BROWS[EYES.indexOf(e)].low.map((i) => P[i])
       // the upper edge follows the brow: at most ~60% of the way from the lid to the brow, so shadow never reaches the brow
       const lifted = top.map((p, k) => { const t = k / (top.length - 1), b = along(brow, t), f = 0.22 + 0.4 * Math.sin(t * Math.PI); return lerp(p, b, f) }).reverse()
-      soft(c, [[...top, ...lifted]], s.c, w * 0.14, v * 0.75, mode)
+      if (s.n === 'Golden') { // metallic gold: a warm tint that keeps the lid texture, not an opaque yellow layer
+        soft(c, [[...top, ...lifted]], '#A8813A', w * 0.14, v * 0.45, 'multiply')
+        soft(c, [[...top, ...lifted]], '#F0C860', w * 0.14, v * 0.7, 'soft-light')
+      } else soft(c, [[...top, ...lifted]], s.c, w * 0.14, v * 0.75, mode)
       if (s.n === 'Smokey') soft(c, [[...e.low.map((i) => P[i]), ...e.low.map((i) => add(P[i], up, -w * 0.1)).reverse()]], s.c, w * 0.1, v * 0.7, 'multiply')
       if (s.n === 'Shimmer' || s.n === 'Golden') soft(c, [ell(add(lerp(P[e.out], P[e.inn], 0.5), up, w * 0.16), w * 0.28, w * 0.09, M.roll)], '#ffffff', w * 0.1, v * 0.45, 'screen')
     })
   },
-  eyeliner(c, M, s, v) {
-    const { P, up } = M
+  eyeliner(c, M, s, v, raw, st = {}) {
+    const { P, up } = M, wingK = st.wing ?? 1 // wing: flick length (0 = none, 1 = default, 1.6 = dramatic)
     EYES.forEach((e) => {
       const w = d(P[e.out], P[e.inn]), top = e.up.map((i) => P[i])
       const dir = norm({ x: P[e.out].x - P[e.inn].x, y: P[e.out].y - P[e.inn].y })
       // tapered liner hugging the lash line: thin at the inner corner, thicker toward the outer corner, short flick
       const n = top.length, th = (k) => Math.max(0.8, w * 0.05 * (0.25 + 0.75 * (1 - k / (n - 1))))
       const upper = top.map((p, k) => add(p, up, th(k)))
-      const wing = add(P[e.out], norm({ x: dir.x * 0.85 + up.x * 0.5, y: dir.y * 0.85 + up.y * 0.5 }), w * 0.16)
+      const wing = add(P[e.out], norm({ x: dir.x * 0.85 + up.x * 0.5, y: dir.y * 0.85 + up.y * 0.5 }), w * 0.16 * wingK)
       soft(c, [[wing, ...upper.slice(1), ...top.slice().reverse().slice(0, -1), P[e.out]]], s.c, Math.max(0.8, w * 0.012), v * 0.92)
     })
   },
@@ -156,6 +169,14 @@ const DRAW = {
         c.moveTo(p.x, p.y); c.quadraticCurveTo(p.x + dir.x * len * 0.6, p.y + dir.y * len * 0.6, p.x + (dir.x + outer.x * 0.25) * len, p.y + (dir.y + outer.y * 0.25) * len)
       }
       c.stroke(); c.restore()
+    })
+  },
+  contour(c, M, s, v, raw, st = {}) {
+    const { P, fw, up } = M
+    contourShapes(P, fw, up, st).forEach(({ shape, blur, a, side }) => {
+      const k = side ? sideVis(M, side) : 1; if (k < 0.02) return
+      soft(c, [shape], s.c, blur, v * a * k * 0.55, 'multiply')
+      soft(c, [shape], s.c, blur, v * a * k * 0.3, 'soft-light')
     })
   },
   brows(c, M, s, v) {
@@ -183,7 +204,28 @@ const DRAW = {
   },
 }
 const lipLum = { t: 0, v: null }
-const ORDER = ['primer', 'foundation', 'concealer', 'blush', 'highlighter', 'eyeshadow', 'eyeliner', 'mascara', 'brows', 'lipstick', 'gloss']
+const ORDER = ['primer', 'foundation', 'concealer', 'contour', 'blush', 'highlighter', 'eyeshadow', 'eyeliner', 'mascara', 'brows', 'lipstick', 'gloss']
+
+// Contour shapes from landmarks (pixels in the picture, or cm in face texture space: same code, different units).
+// cheek: a slim oval under the cheekbone, from beside the ear toward (not reaching) the mouth corner; temple: the upper outer
+// forehead; jaw: just inside the jaw line, below the ear; chin: tip of the chin (long faces). Weights come from state fields.
+function contourShapes(P, fw, up, st) {
+  const W = (k) => Math.max(0, st[k] ?? 1), out = []
+  ;[[234, 61, 93, 172, 54, -1], [454, 291, 323, 397, 284, 1]].forEach(([ear, mouth, side, jaw, temple, sideId]) => {
+    if (W('cheek') > 0) {
+      const A = lerp(P[ear], P[side], 0.5), B = add(lerp(A, P[mouth], 0.55), up, -fw * 0.035), ctr = lerp(A, B, 0.5)
+      const len = d(A, B), ang = Math.atan2(B.y - A.y, B.x - A.x)
+      out.push({ shape: ell(ctr, len * 0.55, fw * 0.03, ang), blur: fw * 0.05, a: 0.9 * W('cheek'), side: sideId })
+    }
+    if (W('forehead') > 0) { const T = lerp(P[temple], P[ear], 0.25); out.push({ shape: ell(T, fw * 0.06, fw * 0.1, Math.atan2(up.y, up.x)), blur: fw * 0.07, a: 0.6 * W('forehead'), side: sideId }) }
+    if (W('jaw') > 0) {
+      const J = lerp(P[jaw], P[152], 0.25), J0 = lerp(P[ear], P[jaw], 0.55), ctr = lerp(J0, J, 0.5)
+      out.push({ shape: ell(ctr, d(J0, J) * 0.6, fw * 0.03, Math.atan2(J.y - J0.y, J.x - J0.x)), blur: fw * 0.05, a: 0.55 * W('jaw'), side: sideId })
+    }
+  })
+  if ((st.chin ?? 0) > 0) out.push({ shape: ell(add(P[152], up, fw * 0.03), fw * 0.07, fw * 0.035, Math.atan2(up.x, -up.y)), blur: fw * 0.05, a: 0.5 * st.chin, side: 0 })
+  return out
+}
 
 // ---- skin products on the 3D face mask (render/facemesh.js) ----
 // Each one is painted ONCE in face texture space, in centimetres of a real face (cm(i) = where landmark i lies), with the same
@@ -238,6 +280,14 @@ const MESH = {
     },
     passes: (v) => [['multiply', v * 0.5], ['soft-light', v * 0.4]],
   },
+  contour: {
+    paint(x, S, s, st) {
+      const { cm, fill } = uvPainter(x, S)
+      const P = new Proxy({}, { get: (_, i) => cm(+i) }) // landmark i in face-texture cm, so the 2D shape code is reused
+      contourShapes(P, FW, { x: 0, y: -1 }, st).forEach(({ shape, blur, a }) => fill([shape], s.c, blur, Math.min(1, a)))
+    },
+    passes: (v) => [['multiply', v * 0.55], ['soft-light', v * 0.3]],
+  },
   highlighter: {
     paint(x, S, s) {
       const { cm, fill } = uvPainter(x, S)
@@ -249,15 +299,23 @@ const MESH = {
     passes: (v) => [['screen', v * 0.7]],
   },
 }
-export const MESH_IDS = new Set(Object.keys(MESH))
+export const MESH_IDS = new Set([...Object.keys(MESH), 'primer'])
+// primer mask in face texture space: the face minus eyes, lips and brows, soft toward the outline
+function MESH_PRIMER_MASK(x, S) {
+  const { cm, fill, fadeEdge } = uvPainter(x, S)
+  fill([OVAL.map(cm), ...EYES.map((e) => e.loop.map(cm)), LIPS_OUT.map(cm), ...BROWS.map((b) => [...b.up, ...b.low.slice().reverse()].map(cm))], '#fff', FW * 0.02, 1, 'evenodd')
+  fadeEdge(FW * 0.1)
+}
 
 // mesh: the WebGL face mask (or null: everything is drawn with the 2D renderer)
 export function drawMakeup(c, M, state, raw, mesh) {
-  const meshOn = !!mesh && Object.keys(state).some((id) => MESH[id]) && mesh.update(M)
+  const meshOn = !!mesh && Object.keys(state).some((id) => MESH_IDS.has(id)) && mesh.update(M)
   ORDER.forEach((id) => {
     const st = state[id]; if (!st) return
     const shade = MAKEUP.find((p) => p.id === id).shades[st.shade]
-    if (meshOn && MESH[id] && mesh.draw(c, mesh.texture(`${id}:${st.shade}`, (x, S) => MESH[id].paint(x, S, shade)), MESH[id].passes(st.v))) return
-    DRAW[id](c, M, shade, st.v, raw)
+    // the texture key includes the shape fields, so a contour re-shaped by the AI is repainted (once), not every frame
+    const key = id === 'contour' ? `${id}:${st.shade}:${['cheek', 'jaw', 'forehead', 'chin'].map((k) => (st[k] ?? '')).join(',')}` : `${id}:${st.shade}`
+    if (meshOn && MESH[id] && mesh.draw(c, mesh.texture(key, (x, S) => MESH[id].paint(x, S, shade, st)), MESH[id].passes(st.v))) return
+    DRAW[id](c, M, shade, st.v, raw, st, meshOn ? mesh : null)
   })
 }

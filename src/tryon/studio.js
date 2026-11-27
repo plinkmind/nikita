@@ -6,7 +6,8 @@ import { HeadTracker } from './track/head.js'
 import { PointSetFilter, Presence } from './track/filters.js'
 import { HandTracker } from './track/hands.js'
 import { initPhoto } from './photo.js'
-import { drawMakeup, MESH_IDS } from './makeup.js'
+import { drawMakeup, MESH_IDS, MAKEUP } from './makeup.js'
+import { measure, summarise, frameQuality, buildLook, OCCASIONS, DEFAULT_ANALYSIS } from './autolook.js'
 import { createFaceMesh } from './render/facemesh.js'
 import { JEWELLERY, drawJewellery, resetJewellery, setJewelleryLight, neckFrame } from './jewellery.js'
 import { createLight } from './render/light.js'
@@ -26,6 +27,14 @@ const TEMPLATE = `
     <div class="ts-view">
       <canvas class="ts-out"></canvas><video class="ts-vid" playsinline muted></video>
       <div class="ts-msg"></div><div class="ts-hint" hidden>Looking for your face... move into the frame</div>
+      <div class="ai-intro" hidden>
+        <span class="ai-k">AI Beauty Mirror</span>
+        <h3>Sit back. Your look applies itself.</h3>
+        <ol><li>Allow the camera</li><li>Look into the mirror</li><li>AI reads your features and applies a complete look, live</li></ol>
+        <button class="ai-go" data-a="aistart">Start Makeup Experience</button>
+        <p class="ai-err" role="alert" hidden></p>
+      </div>
+      <div class="ai-toast" role="status" aria-live="polite" hidden></div>
       <input class="ts-split" type="range" min="2" max="98" value="50" hidden aria-label="Before and after divider">
     </div>
     <div class="ts-bar">
@@ -34,7 +43,8 @@ const TEMPLATE = `
     </div>
   </section>
   <aside class="ts-panel">
-    <div class="ts-tabs"><button data-tab="makeup" class="on">Makeup</button><button data-tab="hair">Hair</button><button data-tab="outfits">Outfits</button><button data-tab="nails">Nails</button><button data-tab="jewellery">Jewellery</button><button data-tab="photo">AI Photo</button><button data-tab="saved">Saved</button><button data-tab="compare">Compare</button></div>
+    <div class="ts-tabs"><button data-tab="auto" class="ai-tab">&#10022; AI Makeup</button><button data-tab="makeup" class="on">Makeup</button><button data-tab="hair">Hair</button><button data-tab="outfits">Outfits</button><button data-tab="nails">Nails</button><button data-tab="jewellery">Jewellery</button><button data-tab="photo">AI Photo</button><button data-tab="saved">Saved</button><button data-tab="compare">Compare</button></div>
+    <div class="ts-auto" hidden></div>
     <div class="ts-list"></div>
     <div class="ts-edit" hidden></div>
     <div class="ts-looks" hidden></div>
@@ -216,6 +226,138 @@ export function initStudio(hooks = {}) {
   const say = (t) => { msg.textContent = t || ''; msg.hidden = !t }
   const btn = (a) => $(`[data-a="${a}"]`)
 
+  /* ---------- AI automatic makeup (autolook.js) ----------
+     idle -> (camera on) search -> (good frontal frame) scan: ~20 readings over ~1.4 s -> done: the complete look fades in.
+     If the face is gone for 3 s, the next face is treated as a new person: the look fades out and the mirror analyses again. */
+  const AI = { on: false, phase: 'off', reads: [], scanT: 0, A: null, occ: 'auto', variant: 0, k: 1, lip: null, eye: null, off: new Set(), look: null, fade: 1, fadeTo: 1, pending: null, lastSeen: 0, removed: false, toast: '', toastT: 0, q: 'face', err: '', starting: false, tickT: 0, progress: 0 }
+  const LIP = MAKEUP.find((p) => p.id === 'lipstick'), EYE = MAKEUP.find((p) => p.id === 'eyeshadow')
+  const isMakeup = (id) => categoryOf(id) === 'makeup'
+  const clearMakeup = () => Object.keys(state).forEach((id) => { if (isMakeup(id)) delete state[id] })
+  function aiEnable() { AI.on = true; if (AI.phase === 'off') AI.phase = cam.active ? 'search' : 'idle'; syncIntro() }
+  function aiToast(t) { AI.toast = t; AI.toastT = performance.now(); const el = $('.ai-toast'); el.textContent = t; el.hidden = false; clearTimeout(aiToast.tm); aiToast.tm = setTimeout(() => { el.hidden = true }, 2600) }
+  // write the look into the studio state (other makeup is replaced; jewellery, hair, nails and outfits stay as they are)
+  function aiCommit(L, fade) {
+    clearMakeup()
+    Object.entries(L.state).forEach(([id, st]) => { state[id] = { ...st, v: st.v * fade } })
+    AI.look = L; AI.fade = fade; AI.fadeTo = 1; AI.pending = null; dirty = true
+    if (tab === 'auto') renderList()
+  }
+  function aiBuild() { return buildLook(AI.occ, AI.variant, AI.A || DEFAULT_ANALYSIS, { k: AI.k, lip: AI.lip, eye: AI.eye, off: AI.off }) }
+  // animated: the current look fades out (0.2 s), the new one fades in (0.45 s); instant: shade / toggle changes
+  function aiApply(animated = true) {
+    if (!AI.A) { renderList(); return } // chosen before the face was read: kept, and used as soon as it is
+    AI.removed = false
+    const L = aiBuild()
+    if (animated && AI.look && Object.keys(state).some(isMakeup)) { AI.pending = L; AI.fadeTo = 0 }
+    else { aiCommit(L, animated ? 0 : 1); if (animated) aiToast(`✦ ${L.name} applied`) }
+  }
+  function aiTick(now) {
+    const dt = AI.tickT ? Math.min(0.1, (now - AI.tickT) / 1000) : 0; AI.tickT = now
+    if (AI.fade === AI.fadeTo || !AI.look) return
+    AI.fade = AI.fadeTo > AI.fade ? Math.min(1, AI.fade + dt / 0.45) : Math.max(0, AI.fade - dt / 0.2)
+    Object.entries(AI.look.state).forEach(([id, st]) => { if (state[id]) state[id].v = Math.min(1, st.base * AI.k) * AI.fade })
+    if (AI.fade === 0 && AI.pending) { const L = AI.pending; aiCommit(L, 0); aiToast(`✦ ${L.name} applied`) }
+    else if (AI.fade === 0 && AI.phase !== 'done') AI.fadeTo = 0 // faded out while the face is read again: stay hidden
+  }
+  // Away for 4 s (stood up, looked at a phone, or a new customer sat down): read the face again when it is back. The current
+  // look fades out while that happens. Same person: their look and choices come back. Someone else: a fresh look for them.
+  function aiAway() {
+    AI.prev = AI.A ? { A: AI.A, lip: AI.lip, eye: AI.eye, off: new Set(AI.off), variant: AI.variant, removed: AI.removed } : null
+    Object.assign(AI, { phase: 'search', A: null, reads: [] }); AI.fadeTo = 0
+    if (tab === 'auto') renderList()
+  }
+  const samePerson = (a, b) => a && b && a.personal && b.personal && Math.abs(a.raw.hw - b.raw.hw) < 0.06 && Math.abs(a.raw.jaw - b.raw.jaw) < 0.05 && Math.abs(a.raw.lips - b.raw.lips) < 0.06 && Math.abs((a.raw.L || 0) - (b.raw.L || 0)) < 9
+  function aiFinishScan() {
+    AI.A = AI.reads.length ? summarise(AI.reads) : { ...DEFAULT_ANALYSIS }
+    AI.A.personal = AI.reads.length > 0
+    AI.phase = 'done'
+    const P = AI.prev; AI.prev = null
+    if (P && samePerson(P.A, AI.A)) Object.assign(AI, { lip: P.lip, eye: P.eye, off: P.off, variant: P.variant, removed: P.removed })
+    else if (P) { Object.assign(AI, { lip: null, eye: null, variant: 0, removed: false }); AI.off.clear() }
+    if (!AI.removed) aiApply(true); else { clearMakeup(); AI.look = null }
+    if (tab === 'auto') renderList()
+  }
+  // runs once per camera frame, after the face tracker
+  function aiFrame(now, w, h) {
+    if (AI.phase === 'idle' && cam.active) AI.phase = 'search'
+    if (M && M.alpha > 0.5) AI.lastSeen = now
+    let q = frameQuality(M, w, h)
+    // a face that stays turned (an angled laptop, a mirror to the side) is still read after 2.5 s: the measurements are
+    // corrected for the turn (autolook.js), so the person is never stuck waiting
+    if (q === 'straight' || q === 'centre') { AI.turnT ||= now; if (now - AI.turnT > 2500 && Math.abs(M.yaw) < 0.8 && Math.abs(M.pitch) < 0.5 && M.inFrame > 0.9) q = null } else AI.turnT = 0
+    AI.q = q
+    if (AI.phase === 'search') { if (!q) { AI.phase = 'scan'; AI.reads = []; AI.scanT = now; if (tab === 'auto') renderList() } }
+    else if (AI.phase === 'scan') {
+      if (!M && now - AI.lastSeen > 1500) { AI.phase = 'search'; return }
+      if (!q) { try { AI.reads.push(measure(M, raw)) } catch { /* unreadable frame */ } }
+      AI.progress = Math.min(1, AI.reads.length / 20, (now - AI.scanT) / 1400)
+      // tracking that rarely gives a clean frontal view: after 6 s use what there is (or a neutral analysis)
+      if (AI.progress >= 1 || now - AI.scanT > 6000) aiFinishScan()
+    } else if (AI.phase === 'done' && now - AI.lastSeen > 4000) aiAway()
+  }
+  function aiHint() {
+    if (!AI.on || !cam.active || !tracker) return ''
+    if (performance.now() - AI.toastT < 2600) return ''
+    if (AI.phase === 'search') return { face: 'Sit in front of the mirror and look at the camera', closer: 'Come a little closer to the camera', centre: 'Move your face into the centre of the picture', straight: 'Look straight at the camera for a moment' }[AI.q] || ''
+    if (AI.phase === 'scan') return `Analysing your features... ${Math.round(AI.progress * 100)}%`
+    return ''
+  }
+  // scanning effect over the live picture while the face is analysed (drawn on the screen only, never in a captured photo)
+  function drawScan(c, now) {
+    if (AI.phase !== 'scan' || !M) return
+    const P = M.P, t = (now / 1100) % 1
+    c.save(); c.beginPath(); FACE_OVAL.forEach((i, k) => (k ? c.lineTo(P[i].x, P[i].y) : c.moveTo(P[i].x, P[i].y))); c.closePath()
+    c.lineWidth = Math.max(1.5, M.fw * 0.006); c.strokeStyle = 'rgba(226,190,124,.85)'; c.shadowColor = 'rgba(226,190,124,.9)'; c.shadowBlur = M.fw * 0.04; c.stroke()
+    c.clip(); c.shadowBlur = 0
+    const top = P[10].y - M.fh * 0.1, bot = P[152].y + M.fh * 0.05, y = top + (bot - top) * t, g = c.createLinearGradient(0, y - M.fh * 0.12, 0, y)
+    g.addColorStop(0, 'rgba(226,190,124,0)'); g.addColorStop(1, 'rgba(226,190,124,.35)')
+    c.fillStyle = g; c.fillRect(0, y - M.fh * 0.12, c.canvas.width, M.fh * 0.12)
+    c.fillStyle = 'rgba(255,240,205,.9)'; c.fillRect(0, y - 1, c.canvas.width, 2)
+    c.fillStyle = 'rgba(255,240,205,.75)'; const r = Math.max(1, M.fw * 0.0045)
+    for (let i = 0; i < 468; i += 3) { const p = P[i]; if (Math.abs(p.y - y) < M.fh * 0.25) c.fillRect(p.x - r, p.y - r, r * 2, r * 2) }
+    c.restore()
+  }
+  function syncIntro() {
+    const show = AI.on && tab === 'auto' && !cam.active && !AI.starting
+    const el = $('.ai-intro'); el.hidden = !show
+    const e = el.querySelector('.ai-err'); e.textContent = AI.err; e.hidden = !AI.err
+    el.querySelector('.ai-go').textContent = AI.err ? 'Try again' : 'Start Makeup Experience'
+    if (show) say('')
+  }
+  async function aiStart() { AI.err = ''; AI.starting = true; syncIntro(); await start(); AI.starting = false; syncIntro() }
+
+  function renderAuto() {
+    const box = $('.ts-auto'), A = AI.A, L = AI.look
+    const sw = (p, sel, key) => p.shades.map((s, i) => `<button class="sw${sel === i ? ' on' : ''}" data-${key}="${i}" style="background:${s.c}" title="${esc(s.n)}" aria-label="${esc(p.label)}: ${esc(s.n)}"></button>`).join('')
+    const lipSel = state.lipstick ? state.lipstick.shade : -1, eyeSel = state.eyeshadow ? state.eyeshadow.shade : -1
+    const card = A ? `<div class="ai-card"><h3>What the AI noticed</h3>
+        <dl><div><dt>Face shape</dt><dd>${esc(A.faceShape)}</dd></div><div><dt>Eyes</dt><dd>${esc(A.eyeShape)}, ${esc(A.eyeSet.toLowerCase())}</dd></div><div><dt>Lips</dt><dd>${esc(A.lipShape)}</dd></div>
+        <div><dt>Foundation</dt><dd>${esc(MAKEUP.find((p) => p.id === 'foundation').shades[A.foundation].n)}, ${esc(A.undertone.toLowerCase())} undertone</dd></div></dl>
+        <p class="ts-note">${A.personal ? 'Estimates from your face shape and how your skin looks on this camera, in this light. Not a skin analysis: change any shade below.' : 'Your camera picture could not be read, so a neutral look was used.'}</p>
+        <button class="ai-link" data-ai="rescan">Analyse again</button></div>`
+      : `<div class="ai-card"><h3>${AI.phase === 'scan' ? 'Analysing your features...' : 'Waiting for your face'}</h3><p class="ts-note">${cam.active ? 'Sit in front of the camera and look at it for a moment. The look is applied automatically.' : 'Press Start Makeup Experience to turn on the camera.'}</p></div>`
+    const cur = L ? `<p class="ai-cur"><b>${esc(L.name)}</b>${L.auto ? ` <span>Auto chose ${esc(L.occasion.label)}: ${esc(L.why)}</span>` : ''}</p>` : AI.removed ? '<p class="ai-cur">Makeup removed. Pick an occasion or press Reset Makeup.</p>' : ''
+    box.innerHTML = `${card}
+      <div class="ts-grp"><h3>Occasion</h3><div class="ts-chips ai-occ">${OCCASIONS.map((o) => `<button class="chip${AI.occ === o.id ? ' on sel' : ''}${o.id === 'auto' ? ' ai-auto' : ''}" data-ai-occ="${o.id}">${o.id === 'auto' ? '&#10022; ' : ''}${esc(o.label)}</button>`).join('')}</div></div>
+      ${cur}
+      <div class="ai-acts"><button data-ai="another">&#10022; Try another AI look</button><button data-a="compare" class="${compare ? 'on' : ''}">Before / After</button></div>
+      <label class="ts-rng">Makeup intensity<input type="range" min="0.3" max="1.4" step="0.01" value="${AI.k}" data-ai-k aria-label="Makeup intensity"></label>
+      <div class="ts-grp"><h3>Lipstick shade</h3><div class="ts-sw">${sw(LIP, lipSel, 'ai-lip')}</div></div>
+      <div class="ts-grp"><h3>Eyeshadow shade</h3><div class="ts-sw">${sw(EYE, eyeSel, 'ai-eye')}</div></div>
+      ${L ? `<div class="ts-grp"><h3>Effects in this look</h3><div class="ts-chips">${L.ids.map((id) => `<button class="chip${AI.off.has(id) ? '' : ' on'}" data-ai-off="${id}" aria-pressed="${!AI.off.has(id)}">${AI.off.has(id) ? '' : '&#10003; '}${esc(findProduct(id).label)}</button>`).join('')}</div></div>` : ''}
+      <div class="ai-acts"><button data-ai="reset">Reset makeup</button><button data-ai="remove">Remove all makeup</button></div>`
+  }
+  function aiAction(a, el) {
+    if (a === 'another') { AI.variant++; aiApply(true) }
+    else if (a === 'reset') { Object.assign(AI, { k: 1, lip: null, eye: null, variant: 0 }); AI.off.clear(); aiApply(true) }
+    else if (a === 'remove') { clearMakeup(); AI.look = null; AI.pending = null; AI.removed = true; renderList() }
+    else if (a === 'rescan') { if (cam.active) { AI.phase = 'search'; AI.reads = []; renderList() } }
+    else if (a === 'occ') { AI.occ = el.dataset.aiOcc; AI.variant = 0; aiApply(true) }
+    else if (a === 'lip') { AI.lip = +el.dataset.aiLip; aiApply(false) }
+    else if (a === 'eye') { AI.eye = +el.dataset.aiEye; aiApply(false) }
+    else if (a === 'off') { const id = el.dataset.aiOff; if (AI.off.has(id)) AI.off.delete(id); else AI.off.add(id); aiApply(false) }
+  }
+
   async function loadTracker() {
     if (tracker || trackerTried) return
     trackerTried = true; say('Loading AI face model...')
@@ -226,14 +368,15 @@ export function initStudio(hooks = {}) {
   async function start(fn) {
     say('Waiting for camera permission...')
     try { await (fn ? fn() : cam.start()) }
-    catch (e) { say(describeError(e)); if (!cam.active) stopLoop(); return }
+    catch (e) { if (AI.on && tab === 'auto') { AI.err = describeError(e).replace('press Start Camera', 'press Try again'); say('') } else say(describeError(e)); if (!cam.active) stopLoop(); return }
     running = true; dirty = true; say(''); sync(); loadTracker(); cancelAnimationFrame(raf); loop()
   }
   function resetTracking() { masks.reset(); hairR.reset(); segHead = null; segEyes = null; eyes = null; head.reset(); head.presence.reset(); M = null; resetJewellery(); pose = null; person = null; resetOutfit(); poseFilter.reset(); posePresence.reset(); hands = []; handTracker.reset(); lastVT = -1 }
-  function stopLoop() { running = false; cancelAnimationFrame(raf); resetTracking(); hint.hidden = true; sync() }
+  function stopLoop() { running = false; cancelAnimationFrame(raf); resetTracking(); hint.hidden = true; if (AI.on) { AI.phase = 'idle'; AI.reads = [] } sync() }
   function stop() {
     cam.stop(); stopLoop(); octx.clearRect(0, 0, out.width, out.height)
-    say('Camera is off. Press Start Camera to continue.')
+    if (!(AI.on && tab === 'auto')) say('Camera is off. Press Start Camera to continue.')
+    syncIntro()
   }
   function sync() {
     btn('start').disabled = cam.active; btn('stop').disabled = !cam.active
@@ -261,6 +404,7 @@ export function initStudio(hooks = {}) {
     const tNow = performance.now(), newFrame = hasVfc ? vfcFrames !== seenVfc : vid.currentTime !== lastVT || tNow - lastNewAt > 40
     if (!newFrame && !dirty) { stat.dup++; return }
     const now = performance.now(), need = needs(), t = now / 1000
+    if (AI.on) need.add('face')
     if (newFrame) {
       lastVT = vid.currentTime; seenVfc = vfcFrames; lastNewAt = tNow; frameNo++; stat.camN++
       if (now - stat.fpsT >= 1000) { stat.cam = stat.camN; stat.camN = 0; stat.fpsT = now }
@@ -283,6 +427,7 @@ export function initStudio(hooks = {}) {
         nose = lm ? pt(168) : null; eyes = lm ? [pt(33), pt(263)] : null // unsmoothed: exact frame-to-frame motion
         if (M && lightOn()) light.update(M, raw, now)
       } else if (!need.has('face')) M = null
+      if (AI.on && tracker) aiFrame(now, w, h)
       for (const k of ['hand', 'pose', 'seg']) {
         const m = models[k]; if (!wants(k) || !m?.t) continue
         // segmenter only for occlusion (no hair colour): every 2nd frame on computers, every 3rd on phones
@@ -327,6 +472,7 @@ export function initStudio(hooks = {}) {
       const target = M.alpha < 0.999 || cut ? lctx : fctx
       if (target === lctx) lctx.drawImage(fin, 0, 0)
       M.light = liveLight()
+      if (AI.on) aiTick(now)
       drawMakeup(target, M, state, raw, Object.keys(state).some((id) => MESH_IDS.has(id)) ? faceMesh() : null)
       if (cut) cutOccluders(lctx, masks, FACE_OVAL.map((i) => M.P[i]), w, h, KEEP.map((ix) => ({ poly: ix.map((i) => M.P[i]), pad: M.fw * 0.03 })), fin, segOff)
       M.shoulders = B ? { l: B.l, r: B.r } : null
@@ -338,16 +484,18 @@ export function initStudio(hooks = {}) {
     if (hands.length && (need.has('handOcc') || outfitOn)) restoreHands(fctx, w)
     if (need.has('hand')) drawNails(fctx, hands, state, t, raw, cam.mirror, liveLight())
     // guidance
-    const hm = note ? note : need.has('face') && tracker && !M ? 'Looking for your face... move into the frame'
+    const hm = note ? note : aiHint() || (need.has('face') && tracker && !M ? 'Looking for your face... move into the frame'
       : tab === 'outfits' && outfitOn && models.pose?.t && !B ? 'Step back a little so your shoulders are in the frame'
-      : tab === 'nails' && need.has('hand') && models.hand?.t && !hands.length ? 'Show your hand to the camera, back of the hand facing you' : ''
+      : tab === 'nails' && need.has('hand') && models.hand?.t && !hands.length ? 'Show your hand to the camera, back of the hand facing you' : '')
     if (hint.textContent !== hm) hint.textContent = hm
     hint.hidden = !hm
     octx.drawImage(fin, 0, 0)
+    if (AI.on) drawScan(octx, now)
     stat.drawMs = (stat.drawMs || 0) * 0.9 + (performance.now() - tDraw) * 0.1; stat.procMs = (stat.procMs || 0) * 0.9 + (performance.now() - now) * 0.1
     if (newFrame) { perf.ring[perf.n % perf.ring.length] = performance.now() - now; perf.n++ }
     // adaptive budget: if a frame takes longer than the camera interval, run the secondary models less often (never the face)
     if (frameNo % 15 === 0) budgetK = stat.procMs > (phone ? 50 : 38) ? Math.min(4, budgetK + 1) : stat.procMs < (phone ? 28 : 22) ? Math.max(1, budgetK - 1) : budgetK
+    if (debug) window.__glamifyAI = { phase: AI.phase, on: AI.on, look: AI.look?.name || null, occasion: AI.look?.occasion.id || null, A: AI.A, fade: +AI.fade.toFixed(2), reads: AI.reads.length, k: AI.k, state: JSON.parse(JSON.stringify(state)), P: M ? M.P.map((p) => [+p.x.toFixed(1), +p.y.toFixed(1)]) : null, canvases: { raw, fin } }
     if (debug) { if (debugDraw) drawDebug(w, h, need); window.__glamify = { perf: perfSummary(), cam: stat.cam, models: Object.keys(models).filter((k) => models[k].t), need: [...need], hint: hint.hidden ? '' : hint.textContent, neck: M && M.shoulders !== undefined ? !!M.shoulders : null, frames: frameNo, budgetK, vfc: hasVfc, drawMs: +(stat.drawMs || 0).toFixed(1), procMs: +(stat.procMs || 0).toFixed(1), faceMissed: head.misses, faceRejected: head.rejects, faceJumpsHeld: head.jumps, presence: M ? +M.alpha.toFixed(2) : 0, yawDeg: M ? +(M.yaw * 57.3).toFixed(1) : null, faceMs: +stat.detMs.toFixed(1), mesh: !!mesh && mesh.ok, hairPath: stat.hairPath || null, j3: j3.r ? 'on' : j3.r === false ? 'failed' : 'off', light: light.value.ok ? { x: +light.value.dir.x.toFixed(2), y: +light.value.dir.y.toFixed(2), z: +light.value.dir.z.toFixed(2), contrast: +light.value.contrast.toFixed(2), tint: light.value.tint.map((v) => +v.toFixed(2)), bright: +light.value.bright.toFixed(2) } : null, hands: hands.length, handTip: hands.map((h) => [Math.round(h.P[4].x), Math.round(h.P[4].y), +h.alpha.toFixed(2)]), pose: !!pose, person: !!person, personMs: +(stat.personMs || 0).toFixed(1), outfitPath: outfitRenderer(), bodyCheck: stat.bodyCheck, bodyRejected: stat.bodyRejected || 0, ms: stat.ms, ears: M ? ['lobeL', 'lobeR'].map((n) => { const a = M.project(n); return [+a.x.toFixed(1), +a.y.toFixed(1)] }) : null } }
     if (compare) {
       const x = (w * split.value) / 100
@@ -391,6 +539,11 @@ export function initStudio(hooks = {}) {
 
   function renderList() {
     dirty = true
+    $('.ts-auto').hidden = tab !== 'auto'; syncIntro()
+    if (tab === 'auto') {
+      ;['.ts-list', '.ts-edit', '.ts-looks', '.ts-photo'].forEach((q) => { $(q).hidden = true }); photo.hide()
+      $('.ts-applied').innerHTML = appliedHtml(); renderAuto(); return
+    }
     const looks = lookTab()
     $('.ts-list').hidden = looks; $('.ts-looks').hidden = !(tab === 'saved' || tab === 'compare'); $('.ts-photo').hidden = tab !== 'photo'
     if (tab === 'photo') photo.show(); else photo.hide()
@@ -441,7 +594,7 @@ export function initStudio(hooks = {}) {
   }
   function save() {
     if (!Object.keys(state).length) { say('Apply at least one product before saving a look.'); setTimeout(() => say(''), 2200); return }
-    const l = saveLook(state, thumb())
+    const l = saveLook(state, thumb(), AI.on && AI.look ? AI.look.name : undefined)
     say(l ? `Saved as ${l.name}. Find it under Saved.` : 'Your browser would not store this look (private mode or storage full).'); setTimeout(() => say(''), 2200)
     if (tab === 'saved' || tab === 'compare') renderList()
   }
@@ -468,7 +621,12 @@ export function initStudio(hooks = {}) {
 
   root.addEventListener('click', (e) => {
     const t = e.target.closest('button'); if (!t || t.closest('.ts-photo')) return
-    if (t.dataset.tab) { tab = t.dataset.tab; if (t.dataset.mode) photo.setMode(t.dataset.mode); root.querySelectorAll('.ts-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab)); renderList() }
+    if (t.dataset.tab) { tab = t.dataset.tab; if (tab === 'auto') aiEnable(); if (t.dataset.mode) photo.setMode(t.dataset.mode); root.querySelectorAll('.ts-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab)); renderList() }
+    else if (t.dataset.ai) aiAction(t.dataset.ai, t)
+    else if (t.dataset.aiOcc) aiAction('occ', t)
+    else if (t.dataset.aiLip) aiAction('lip', t)
+    else if (t.dataset.aiEye) aiAction('eye', t)
+    else if (t.dataset.aiOff) aiAction('off', t)
     else if (t.dataset.p) { addProduct(t.dataset.p); sel = t.dataset.p; renderList() }
     else if (t.dataset.fp) { const id = t.dataset.fp; addProduct(id); sel = id; tab = categoryOf(id); root.querySelectorAll('.ts-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab)); renderList() }
     else if (t.dataset.opt) { const [k, v] = t.dataset.opt.split(':'); if (state[sel]) state[sel][k] = v; renderList() }
@@ -488,14 +646,20 @@ export function initStudio(hooks = {}) {
     renderList()
   })
   root.addEventListener('change', (e) => { const s = e.target.closest('[data-cmp]'); if (s) { if (s.dataset.cmp === 'A') cmpA = +s.value; else cmpB = +s.value; renderLooks() } })
-  root.addEventListener('input', (e) => { dirty = true; if (e.target.matches('.ts-rng input') && state[sel]) state[sel][e.target.dataset.k || 'v'] = +e.target.value })
+  root.addEventListener('input', (e) => { // overall AI makeup intensity
+    if (!e.target.matches('[data-ai-k]')) return
+    AI.k = +e.target.value
+    if (AI.look) Object.entries(AI.look.state).forEach(([id, st]) => { if (state[id]) state[id].v = Math.min(1, st.base * AI.k) * AI.fade })
+  })
+  root.addEventListener('input', (e) => { dirty = true; if (e.target.matches('.ts-rng input') && !e.target.matches('[data-ai-k]') && state[sel]) state[sel][e.target.dataset.k || 'v'] = +e.target.value })
 
   async function action(a) {
     if (a === 'close') close()
+    else if (a === 'aistart') aiStart()
     else if (a === 'start') start()
     else if (a === 'stop') stop()
     else if (a === 'switch') { try { await cam.switch(); resetTracking() } catch (e) { say(describeError(e)); setTimeout(() => say(''), 2500) } }
-    else if (a === 'compare') { compare = !compare; split.hidden = !compare; btn('compare').classList.toggle('on', compare) }
+    else if (a === 'compare') { compare = !compare; split.hidden = !compare; root.querySelectorAll('[data-a="compare"]').forEach((b) => b.classList.toggle('on', compare)) }
     else if (a === 'capture') capture()
     else if (a === 'download') download()
     else if (a === 'savelook') save()
@@ -503,15 +667,21 @@ export function initStudio(hooks = {}) {
     else if (a === 'reset') { Object.keys(state).forEach((k) => delete state[k]); sel = null; renderList() }
   }
 
-  function open() {
+  // opts.mode 'auto': opens on the AI Makeup tab with its start screen (the camera starts from "Start Makeup Experience")
+  function open(opts = {}) {
     lastOpener = document.activeElement
     Object.values(models).forEach((m) => { m.fails = 0; m.failedAt = 0 })
+    if (opts.mode === 'auto') { tab = 'auto'; aiEnable() }
+    root.querySelectorAll('.ts-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab))
     root.hidden = false; document.body.classList.add('studio-open'); renderList(); sync()
-    root.scrollTop = 0; $('.ts-x').focus({ preventScroll: true }); hooks.onOpen?.()
+    root.scrollTop = 0; hooks.onOpen?.()
+    if (opts.mode === 'auto' && !cam.active) { $('.ai-go').focus({ preventScroll: true }); return }
+    $('.ts-x').focus({ preventScroll: true })
     start() // runs from the tap on "Try It On", so the browser allows the camera prompt
   }
   function close() {
     photo.hide(); cam.stop(); stopLoop(); releaseIdle(new Set(), performance.now(), true); if (mesh) { mesh.dispose(); mesh = undefined } if (j3.r) { j3.r.dispose(); j3.r = null } hairR.dispose(); light.reset(); root.hidden = true; document.body.classList.remove('studio-open')
+    AI.on = false; AI.phase = 'off'; AI.A = null; AI.look = null; AI.pending = null; AI.err = ''
     lastOpener?.focus?.({ preventScroll: true }); hooks.onClose?.()
   }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !root.hidden) close() })

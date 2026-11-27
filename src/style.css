@@ -235,3 +235,7 @@ h1,h2{font-family:Italiana,"Didot",Georgia,serif;font-weight:400;line-height:1.0
   .ch.fin .tryon-cta{margin-bottom:8px}
   #demoForm{gap:8px}
 }
+/* AI makeup mirror call-to-action on the hero and beauty chapters */
+.ch .ctas .ai-mk{margin-top:18px;background:linear-gradient(110deg,rgba(226,190,124,.3),rgba(226,190,124,.08))}
+@media (max-width:899px) and (max-aspect-ratio:5/4){ .ch .ctas .ai-mk{margin-top:14px;margin-bottom:0} }
+@media (max-height:520px) and (min-aspect-ratio:5/4){ .ch .ctas .ai-mk{margin-top:8px} }

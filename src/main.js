@@ -20,8 +20,8 @@ const ACCENTS = [
 ]
 // Edit the story here. crop = how a landscape video is cropped into the portrait mirror.
 const CH = [
-  { k: 'Glamify XR smart mirror', h: 'The future of luxury, reflected.', p: 'Clients try on makeup, couture and fine jewelry in real time, right inside your boutique.', bg: 'hero-earring', color: '#1c1118' },
-  { k: '01 · Beauty and makeup', h: 'Flawless color, on her.', p: 'Lifelike virtual makeup, live in the mirror. True-to-shade lipstick, eyeshadow, blush and foundation that stay in place as she moves.', video: 'beauty-tryon', prop: 'lipstick', color: '#3b1624' },
+  { k: 'Glamify XR smart mirror', h: 'The future of luxury, reflected.', p: 'Clients try on makeup, couture and fine jewelry in real time, right inside your boutique.', bg: 'hero-earring', color: '#1c1118', cta: 'Try the AI makeup mirror' },
+  { k: '01 · Beauty and makeup', h: 'Flawless color, on her.', p: 'Sit in front of the mirror and AI reads her features, then applies a complete look live: foundation to lipstick, for a wedding, Diwali or the office.', video: 'beauty-tryon', prop: 'lipstick', color: '#3b1624', cta: 'AI makeup on your face' },
   { k: '02 · Fashion and apparel', h: 'An endless wardrobe.', p: 'Garments follow her shoulders, arms and turns in the live mirror, and a realistic AI photo shows how they look on her. A digital wardrobe, right in the fitting area.', video: 'fashion-gown', prop: 'cloth', color: '#14203a' },
   { k: '03 · Jewelry and luxury', h: 'Every facet, alive.', p: 'Earrings and necklaces in 3D, with sparkle that reacts to the light in the room and follows every turn of her head.', video: 'bridal-ring', prop: 'gem', color: '#2c2210' },
   { k: 'Technology', h: 'Live. Private. No app.', p: 'Face, hand, hair and body tracking run in real time on the device, so the camera picture never leaves it. Nothing to install: it opens in the browser.', prop: 'rings', color: '#0d2a2a' },
@@ -131,7 +131,8 @@ const FINALE = `
 CH.forEach((c, i) => {
   const s = document.createElement('section')
   s.className = 'ch ' + (items[i].side === 1 ? 'l' : 'r') + (c.finale ? ' fin' : '')
-  s.innerHTML = `<div class="box"><p class="k">${c.k}</p><h${i ? 2 : 1}>${c.h}</h${i ? 2 : 1}><p class="t">${c.p}</p>${c.finale ? FINALE : ''}</div>`
+  const cta = c.cta ? `<div class="ctas"><button type="button" class="tryon-cta ai-mk" data-automakeup>&#10022; ${c.cta}</button></div>` : ''
+  s.innerHTML = `<div class="box"><p class="k">${c.k}</p><h${i ? 2 : 1}>${c.h}</h${i ? 2 : 1}><p class="t">${c.p}</p>${cta}${c.finale ? FINALE : ''}</div>`
   $('#chs').appendChild(s)
   const d = document.createElement('button'); d.setAttribute('aria-label', 'Go to chapter ' + (i + 1))
   d.onclick = () => scrollTo({ top: (i / (N - 1)) * maxScroll(), behavior: 'smooth' })
@@ -393,9 +394,9 @@ const loadStudio = () => (studioP ||= import('./tryon/studio.js').then((m) => m.
 })).catch((e) => { studioP = null; throw e }))
 const openStudio = (e) => {
   const b = e.currentTarget; b.setAttribute('aria-busy', 'true')
-  loadStudio().then((s) => s.open()).catch(() => alert('The try-on studio could not load. Please check your connection and try again.')).finally(() => b.removeAttribute('aria-busy'))
+  loadStudio().then((s) => s.open(b.hasAttribute('data-automakeup') ? { mode: 'auto' } : {})).catch(() => alert('The try-on studio could not load. Please check your connection and try again.')).finally(() => b.removeAttribute('aria-busy'))
 }
-document.querySelectorAll('[data-tryon]').forEach((b) => b.addEventListener('click', openStudio))
+document.querySelectorAll('[data-tryon],[data-automakeup]').forEach((b) => b.addEventListener('click', openStudio))
 const idle = (fn, ms) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: ms }) : setTimeout(fn, ms))
 addEventListener('load', () => idle(() => loadStudio().catch(() => {}), 4000))
 
