@@ -1,7 +1,7 @@
 {
   "name": "glamify-xr",
   "private": true,
-  "version": "2.5.0",
+  "version": "2.6.0",
   "type": "module",
   "scripts": {
     "predev": "node scripts/copy-wasm.mjs && node scripts/fetch-models.mjs",
@@ -12,7 +12,7 @@
     "fetch-models": "node scripts/fetch-models.mjs",
     "start": "node backend/server.js",
     "test": "npm run test:backend",
-    "test:backend": "node --test tests/backend/api.test.mjs tests/backend/netlify-bundle.test.mjs",
+    "test:backend": "node --test tests/backend/api.test.mjs tests/backend/makeover.test.mjs tests/backend/netlify-bundle.test.mjs",
     "test:tracking": "node tests/rig/tune.mjs",
     "test:face": "node tests/rig/face.mjs",
     "test:outfit": "node tests/run.mjs test=outfit && node tests/run.mjs test=garment && node tests/run.mjs test=outfitgeo"

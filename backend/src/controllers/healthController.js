@@ -2,6 +2,7 @@
 import { json } from '../http.js'
 import { pickProvider, describe } from '../providers/index.js'
 import { STYLES, COLOURS } from '../providers/prompts.js'
+import { makeoverSetup } from '../services/makeover.js'
 
 export const healthController = {
   async health(ctx) {
@@ -14,6 +15,7 @@ export const healthController = {
       tryon: {
         outfit: { ready: !!outfit, provider: describe(outfit, ctx.cfg) },
         hair: { ready: !!hair, provider: describe(hair, ctx.cfg), styles: Object.keys(STYLES), colours: Object.keys(COLOURS) },
+        makeover: makeoverSetup(ctx.cfg),
       },
       limits: { maxImageMB: Math.round(ctx.cfg.limits.maxImageBytes / 1e5) / 10, minImageSide: ctx.cfg.limits.minImageSide, guestHours: ctx.cfg.retention.guestHours, resultDays: ctx.cfg.retention.resultDays },
     })

@@ -1,3 +1,28 @@
+# Update 20: AI PHOTO MAKEOVER (personal AI makeup artist for a photo)
+**Status: built and tested against simulated AI services. NOT yet run against the real AI services**: that needs your
+`REPLICATE_API_TOKEN`. No AI-generated makeover photo has been received yet, so the quality of the real result (identity,
+realism) is unverified until you run it with your key (README section S has the checklist).
+
+**New**
+- `backend/src/providers/makeover.js`: AI stylist (Replicate vision model `openai/gpt-4.1-mini`, or Claude with
+  `ANTHROPIC_API_KEY`) and AI image editor (Replicate `google/nano-banana`; nano-banana-2 / -pro / FLUX Kontext also work),
+  the stylist instructions, the plan parser (only expected keys, cleaned, length-limited) and the editor instruction.
+- `backend/src/services/makeover.js`: the job: FASHN outfit (optional) -> stylist -> editor. Every step is start-then-poll,
+  so no request takes more than a few seconds (Netlify stops functions at 10 s). Retries for "busy", honest failures.
+- `backend/src/controllers/makeoverController.js`, routes `POST /api/makeover/generate`, `GET /api/makeover/status/:id`.
+- `src/makeover/makeover.js` + `makeover.css`: the page (photo, outfit photo / description, occasion, instructions, hair and
+  jewellery options, consent, progress per AI step, result with original + makeover, before/after slider, the AI's plan,
+  Download / Save / Try Another / Edit Instructions / Create Another, My makeovers).
+- Website: chapter "04 · AI Photo Makeover" with "✦ Create My AI Look"; "AI Photo Makeover" on the last screen.
+
+**Changed**: `services/tryon.js` (shared storage handles the extra in-between image, makeover plan in job views, cancels a
+running makeover on delete, new error messages), `config.js` (makeover settings; default single AI call timeout 20 s -> 8 s
+to stay under Netlify's 10 s), `healthController.js` (`tryon.makeover`), `tryonController.js` (history `type=makeover`),
+`app.js`, `routes.js`, `src/api/client.js`, `src/main.js`, `.env.example`, README (section S), docs/API.md.
+Not changed: live AI Automatic Makeup, studio, makeup catalogue, jewellery, hair, nails, outfits, See It On You, accounts.
+
+---
+
 # Update 19: AI Automatic Makeup - debugged and fixed
 The whole pipeline was traced stage by stage (camera -> model loading -> face detection -> landmarks -> analysis -> look ->
 makeup state -> rendering) in the PRODUCTION configuration (GPU first, hair and hand occlusion on, models served by the site),

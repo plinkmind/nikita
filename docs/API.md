@@ -128,3 +128,19 @@ while (!['succeeded', 'failed'].includes(job.status)) {
 if (job.status === 'succeeded') img.src = URL.createObjectURL(await (await fetch(job.result.url)).blob())
 ```
 The site's own client is `src/api/client.js`.
+
+## AI Photo Makeover (Update 20)
+
+`POST /api/makeover/generate` (multipart): `person` (image, required), `garment` (image, optional), `outfitText` (max 300,
+required if no garment), `occasion` (wedding | bridal | reception | engagement | diwali | holi | birthday | party | office |
+casual, optional), `instructions` (max 600), `hair` (true|false, default true), `jewellery` (true|false, default true),
+`avoid` (name of the previous look, for "Try another"), `consent=true`. Returns `202 { job }`. `503 not_configured` with
+`error.missing` when the AI keys are not set.
+
+`GET /api/makeover/status/:id` -> `{ job }` with `stage` (outfit | analysing | styling | retrying), and when finished
+`result.url`, `plan` ({ lookName, why, outfit, skin, makeup{foundation..lip_finish}, hair, jewellery, accessories }),
+`notes` (outfit_not_placed | outfit_by_editor | stylist_fallback) and `outfitPlaced`. Failure codes: no_face, minor,
+stylist_error, stylist_bad, blocked, provider_*, timeout.
+
+History, image and delete use the try-on routes: `GET /api/tryon/history?type=makeover`, `GET /api/images/:id/result`,
+`DELETE /api/tryon/:id` (also cancels a running AI job). `GET /api/health` > `tryon.makeover` shows readiness.

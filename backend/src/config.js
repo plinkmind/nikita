@@ -64,9 +64,17 @@ export function loadConfig(env = readEnv()) {
       freeSpace: env.FREE_TRYON_SPACE || 'yisol/IDM-VTON',
       fashn: { key: env.FASHN_API_KEY || '', base: env.FASHN_BASE || 'https://api.fashn.ai/v1', model: env.FASHN_MODEL || 'tryon-v1.6', mode: env.FASHN_MODE || 'quality' },
       replicate: { token: env.REPLICATE_API_TOKEN || '', base: env.REPLICATE_BASE || 'https://api.replicate.com/v1', hairModel: env.REPLICATE_HAIR_MODEL || 'black-forest-labs/flux-kontext-pro' },
-      timeoutMs: num(env.PROVIDER_TIMEOUT_MS, 20_000, 2000, 55_000),
+      timeoutMs: num(env.PROVIDER_TIMEOUT_MS, 8_000, 2000, 55_000), // one provider call; keep under the host's function limit (Netlify: 10 s)
       // a status request asks the AI service at most this often per job (protects the provider's rate limit)
       checkIntervalMs: num(env.PROVIDER_CHECK_MS, 1500, 0, 60_000),
+    },
+    // AI Photo Makeover: an AI stylist (vision model) writes the makeup plan, an AI image editor applies it to the photo.
+    // With only REPLICATE_API_TOKEN set, both run on Replicate. ANTHROPIC_API_KEY (optional) makes Claude the stylist.
+    makeover: {
+      stylist: (env.MAKEOVER_STYLIST || 'auto').toLowerCase(), // auto (Claude if its key is set, else Replicate) | replicate | anthropic
+      stylistModel: env.MAKEOVER_STYLIST_MODEL || 'openai/gpt-4.1-mini',
+      editModel: env.MAKEOVER_EDIT_MODEL || 'google/nano-banana',
+      anthropic: { key: env.ANTHROPIC_API_KEY || '', base: env.ANTHROPIC_BASE || 'https://api.anthropic.com/v1', model: env.ANTHROPIC_MODEL || 'claude-haiku-5-5', version: env.ANTHROPIC_VERSION || '2023-06-01', timeoutMs: num(env.ANTHROPIC_TIMEOUT_MS, 7_500, 2000, 55_000) },
     },
   }
   if (!['blobs', 'fs', 'memory'].includes(cfg.storage.driver)) throw new Error(`STORAGE_DRIVER must be blobs, fs or memory (got "${cfg.storage.driver}")`)

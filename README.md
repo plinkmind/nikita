@@ -3,6 +3,8 @@
 One website, one codebase. The same page adapts to phones, tablets, laptops and desktops.
 Built with Vite, Three.js and MediaPipe Face Landmarker, plus a backend (accounts, AI try-on, history) in `backend/`.
 
+> **New in Update 20: AI PHOTO MAKEOVER**: upload your photo, upload or describe your outfit, and AI creates a new photo of you with matching makeup, hair and jewellery. Needs `REPLICATE_API_TOKEN` (section S).
+>
 > **New in Update 19: AI Automatic Makeup debugged and fixed** (one-click start, faster and reliable face reading, models hosted by the site, visible errors). See the top of `FIX-REPORT.md`.
 >
 > **New in Update 18: AI Automatic Makeup mirror** (sit in front of the camera, a complete look is applied live). See the top of `FIX-REPORT.md`.
@@ -349,3 +351,46 @@ Full audit and measurements: `TRACKING-AUDIT.md`, `TESTING-REPORT.md`.
 - **Honest limit:** this is still your 2D photo bent onto a simple body shape, not a 3D garment simulation. For a realistic
   picture of you wearing it, use **See It On You** (the AI photo try-on, unchanged).
 - Compare with the old flat version: add `?warp=0` to the address.
+
+## S. Update 20: AI PHOTO MAKEOVER (personal AI makeup artist for a photo)
+
+**What it does.** The customer uploads her photo, uploads a photo of her outfit and/or describes it ("red bridal lehenga with
+golden embroidery"), optionally picks an occasion (Wedding, Bridal, Reception, Engagement, Diwali, Holi, Birthday, Party,
+Office, Casual) and writes what she wants. She presses **✦ Create My AI Look** and gets a NEW, AI-generated photo of herself
+wearing the complete look, plus the plan the AI chose (foundation, concealer, contour, blush, highlighter, eyeshadow,
+eyeliner, mascara, brows, lipstick and finish, hairstyle, jewellery). Separate from the live camera mirror and from
+"See It On You"; both are unchanged.
+
+**Where**: chapter "04 · AI Photo Makeover" on the website (button "✦ Create My AI Look") and "AI Photo Makeover" on the last screen.
+
+**How it works (backend/src/services/makeover.js, providers/makeover.js)**
+1. **Outfit** (only with an outfit PHOTO): with `FASHN_API_KEY`, FASHN first puts the outfit on her photo. Without FASHN,
+   the image editor (nano-banana) is given the outfit photo and dresses her in it. If neither can place it, the photo is
+   still used to choose the makeup and the result page says the outfit was not put on.
+2. **AI stylist**: a vision AI looks at her photo and the outfit (colours, fabric, embroidery, traditional or western,
+   formality), her visible skin tone in that light, her features, the occasion and her request, and writes the plan as
+   JSON. Default: `openai/gpt-4.1-mini` on Replicate. Optional: Claude (`ANTHROPIC_API_KEY`). It refuses photos without one
+   clear face, and people who look under 18.
+3. **AI image editor**: `google/nano-banana` on Replicate gets her REAL photo and an instruction built on the server from
+   the plan (keep the same person, face, features, skin texture, pose, background and light; apply this makeup; optional
+   hair and jewellery). The customer's own words never go to the image editor directly, only the cleaned plan.
+4. The result is checked (must be a real image), stored privately, shown with a before/after slider. Photos are deleted
+   when it is done. Saved in "My makeovers" (guests: 24 h; account: kept). "Save My Look" asks a guest to sign up; looks
+   made as a guest move into the new account.
+
+**To switch it on (Netlify > Site configuration > Environment variables, then redeploy)**
+
+| Variable | Needed? | What for | Where |
+|---|---|---|---|
+| `REPLICATE_API_TOKEN` | **yes** | AI stylist + AI image editor (the same token as AI hairstyles) | replicate.com > Account > API tokens (add billing) |
+| `FASHN_API_KEY` | optional | puts an uploaded outfit photo on her first (most faithful garment) | app.fashn.ai |
+| `ANTHROPIC_API_KEY` | optional | Claude as the AI stylist instead of the Replicate model | console.anthropic.com |
+| `MAKEOVER_EDIT_MODEL` | optional | `google/nano-banana` (default), `google/nano-banana-2`, `google/nano-banana-pro` | replicate.com/google |
+
+Approximate cost per look: stylist well under $0.01; nano-banana about $0.04 (pro versions more); FASHN about $0.075.
+Check `GET /api/health` > `tryon.makeover`: `ready: true` and which services it will use. Without the token the page says
+"not switched on" and names the missing variable; no image is ever faked.
+
+**Before going live**: make a few real looks with your key (different skin tones, outfits, occasions) and check that the
+face is preserved: image editors usually keep identity, but no model guarantees it. Model names on Replicate can change:
+if one is retired, set `MAKEOVER_EDIT_MODEL` / `MAKEOVER_STYLIST_MODEL` to its successor.

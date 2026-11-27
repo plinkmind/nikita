@@ -1,5 +1,46 @@
 # Testing report
 
+## Update 20: AI Photo Makeover
+
+**Real AI services: NOT tested** (no API keys in this environment, and replicate.com is not reachable from it). Everything
+below runs against local mocks that follow the providers' documented APIs (Replicate predictions, FASHN /run + /status,
+Anthropic /v1/messages). The mocks prove the pipeline (what is sent, in what order, how answers and failures are handled);
+they cannot prove that the live services accept the requests or how good the generated photo is.
+
+Backend (`npm test`: 77 of 77, of which 22 are the new makeover tests on two storage drivers)
+| Test | Result |
+|---|---|
+| Not configured | 503 `not_configured`, names `REPLICATE_API_TOKEN`; health `ready: false` |
+| Validation | consent, outfit photo or description required, unknown occasion, non-image upload: all rejected |
+| Description only | stylist gets the photo + description + occasion + request; editor gets the REAL photo and an instruction with every planned product, "keep their identity exactly"; customer text never sent to the editor; plan returned; result private (other visitors 404); photos deleted; history type makeover |
+| Outfit photo + FASHN | FASHN gets person + outfit; the makeup is applied to FASHN's dressed photo only |
+| Outfit photo, no FASHN | nano-banana gets both images and is told to dress her; FLUX Kontext keeps her clothes and the result says so |
+| FASHN cannot place the outfit | makeover still finishes, "outfit not placed" note |
+| Stylist: unusable answer (retried once), no face, under 18, service error | job fails with the reason, editor never called, no image |
+| Editor: blocked, not-an-image | job fails with the reason, no image |
+| Claude stylist | key + images + request sent per the Messages API; plan used; on error the Replicate stylist takes over |
+| Injection | plan text cleaned (no newlines, braces, tags), length-limited before it reaches the editor |
+| Delete while running | AI job cancelled, record and files removed |
+
+Browser (production build + real backend + mock AI services; the mock "result" is the test portrait stamped "MOCK RESULT")
+| Test | Desktop 1400x900 | Phone 390x844 |
+|---|---|---|
+| Chapter "04 · AI Photo Makeover" and its button open the page | pass | pass |
+| Not configured: message names the missing key, button disabled | pass | - |
+| Photo, outfit photo + description, occasion, instructions, consent -> Create My AI Look | pass | pass |
+| Progress per AI step -> "Your AI Makeover Is Ready!" | ~9 s with mocks | ~9.6 s |
+| Plan shown: outfit, all 11 makeup items, hairstyle, jewellery; original + makeover + before/after slider | pass | pass |
+| Download My Look (real file), My makeovers list | pass | pass |
+| Try Another Makeup asks the stylist for a different look | pass | pass |
+| Save My Look (guest) opens sign-up above the page | pass | pass |
+| Edit My Instructions keeps the text and focuses it; Create Another Look clears everything | pass | pass |
+| Failure (stylist: no face) shown as an error, no result | pass | pass |
+| Website at 6 screen sizes, studio still opens | pass | |
+
+**To verify with your key**: set `REPLICATE_API_TOKEN`, redeploy, open AI Photo Makeover, and try at least: a red bridal
+lehenga photo, "black evening gown" as text, a pastel saree with occasion Engagement. Check the face is the same person,
+skin texture is natural, and the makeup matches the plan shown under the photo.
+
 ## Update 19: AI Automatic Makeup debugging
 
 **Not verified with a real webcam or a real phone.** This environment has no camera. All camera tests use Chrome's fake camera

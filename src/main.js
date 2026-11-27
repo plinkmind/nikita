@@ -24,6 +24,7 @@ const CH = [
   { k: '01 · Beauty and makeup', h: 'Flawless color, on her.', p: 'Sit in front of the mirror and AI reads her features, then applies a complete look live: foundation to lipstick, for a wedding, Diwali or the office.', video: 'beauty-tryon', prop: 'lipstick', color: '#3b1624', cta: 'Start AI Automatic Makeup' },
   { k: '02 · Fashion and apparel', h: 'An endless wardrobe.', p: 'Garments follow her shoulders, arms and turns in the live mirror, and a realistic AI photo shows how they look on her. A digital wardrobe, right in the fitting area.', video: 'fashion-gown', prop: 'cloth', color: '#14203a' },
   { k: '03 · Jewelry and luxury', h: 'Every facet, alive.', p: 'Earrings and necklaces in 3D, with sparkle that reacts to the light in the room and follows every turn of her head.', video: 'bridal-ring', prop: 'gem', color: '#2c2210' },
+  { k: '04 · AI Photo Makeover', h: 'Your personal AI makeup artist.', p: "Upload your photo, tell us what you're wearing, and let AI create your perfect look: makeup, hair and jewellery chosen for your outfit, on a new photo of you.", video: 'beauty-tryon', prop: 'gem', color: '#2a1018', cta: 'Create My AI Look', ctaAttr: 'data-makeover' },
   { k: 'Technology', h: 'Live. Private. No app.', p: 'Face, hand, hair and body tracking run in real time on the device, so the camera picture never leaves it. Nothing to install: it opens in the browser.', prop: 'rings', color: '#0d2a2a' },
   { k: 'Your turn', h: 'Design your look.', p: 'Choose a metal and shade, then book a live demo for your boutique.', video: 'boutique-mirror', color: '#2a1420', finale: true },
 ]
@@ -120,7 +121,7 @@ scene.add(new THREE.Points(dustGeo, dustMat))
 /* ---------- html overlay ---------- */
 const FINALE = `
   <div class="sw" id="sw">${ACCENTS.map((a, i) => `<button type="button" data-c="${a.c}" style="background:${a.c}" class="${i ? '' : 'on'}" aria-label="${a.n}" title="${a.n}"></button>`).join('')}</div>
-  <div class="ctas"><button type="button" class="tryon-cta ai-mk" data-automakeup>&#10022; Start AI Automatic Makeup</button><button type="button" class="tryon-cta" data-tryon>Try it on live</button><button type="button" class="tryon-cta ai" data-aitryon>See it on you (AI photo)</button></div>
+  <div class="ctas"><button type="button" class="tryon-cta ai-mk" data-automakeup>&#10022; Start AI Automatic Makeup</button><button type="button" class="tryon-cta" data-makeover>AI Photo Makeover</button><button type="button" class="tryon-cta" data-tryon>Try it on live</button><button type="button" class="tryon-cta ai" data-aitryon>See it on you (AI photo)</button></div>
   <form id="demoForm" novalidate>
     <input type="email" name="email" placeholder="Your work email" autocomplete="email" required aria-label="Your work email">
     <input type="text" name="boutique" placeholder="Boutique or brand (optional)" autocomplete="organization" maxlength="120" aria-label="Boutique or brand">
@@ -131,7 +132,7 @@ const FINALE = `
 CH.forEach((c, i) => {
   const s = document.createElement('section')
   s.className = 'ch ' + (items[i].side === 1 ? 'l' : 'r') + (c.finale ? ' fin' : '')
-  const cta = c.cta ? `<div class="ctas"><button type="button" class="tryon-cta ai-mk" data-automakeup>&#10022; ${c.cta}</button></div>` : ''
+  const cta = c.cta ? `<div class="ctas"><button type="button" class="tryon-cta ai-mk" ${c.ctaAttr || 'data-automakeup'}>&#10022; ${c.cta}</button></div>` : ''
   s.innerHTML = `<div class="box"><p class="k">${c.k}</p><h${i ? 2 : 1}>${c.h}</h${i ? 2 : 1}><p class="t">${c.p}</p>${cta}${c.finale ? FINALE : ''}</div>`
   $('#chs').appendChild(s)
   const d = document.createElement('button'); d.setAttribute('aria-label', 'Go to chapter ' + (i + 1))
@@ -407,6 +408,15 @@ const openAi = () => {
   aiP.then((ai) => ai.open()).catch(() => { aiP = null; alert('This part of the site could not load. Please check your connection and try again.') })
 }
 document.querySelectorAll('[data-aitryon]').forEach((b) => b.addEventListener('click', openAi))
+
+// AI Photo Makeover (loaded on first use)
+let mkP = null
+const openMakeover = (e) => {
+  const b = e.currentTarget; b.setAttribute('aria-busy', 'true')
+  ;(mkP ||= import('./makeover/makeover.js').then((m) => m.initMakeover({ onOpen: () => { stopLoop(); pauseVideos() }, onClose: () => { if (!document.hidden) startLoop() } })))
+    .then((m) => m.open()).catch(() => { mkP = null; alert('AI Photo Makeover could not load. Please check your connection and try again.') }).finally(() => b.removeAttribute('aria-busy'))
+}
+document.querySelectorAll('[data-makeover]').forEach((b) => b.addEventListener('click', openMakeover))
 
 /* ---------- account (optional sign-in; the site works without it) ---------- */
 import('./account/account.js').then((m) => m.initAccount()).catch(() => {})

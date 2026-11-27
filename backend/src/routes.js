@@ -3,6 +3,7 @@ import { authController as A } from './controllers/authController.js'
 import { userController as U } from './controllers/userController.js'
 import { tryonController as T } from './controllers/tryonController.js'
 import { healthController as H } from './controllers/healthController.js'
+import { makeoverController as MK } from './controllers/makeoverController.js'
 
 export const ROUTES = [
   ['GET', '/api/health', H.health],
@@ -20,6 +21,9 @@ export const ROUTES = [
   ['POST', '/api/tryon/:id/fail', T.fail],
   ['DELETE', '/api/tryon/:id', T.remove],
   ['GET', '/api/images/:id/:kind', T.image],
+  // AI Photo Makeover (history, image and delete use the try-on routes above: ?type=makeover)
+  ['POST', '/api/makeover/generate', MK.generate],
+  ['GET', '/api/makeover/status/:id', MK.status],
 ]
 
 const compiled = ROUTES.map(([method, path, handler]) => {

@@ -56,7 +56,10 @@ export class Client {
 
 // ---- mock AI providers ----
 export async function startMockProviders() {
-  const st = { fashnMode: 'ok', fashnRuns: 0, polls: 0, runFailOnce: false, lastFashn: null, lastReplicate: null, cancelled: [], resultPng: png(600, 900) }
+  const st = { fashnMode: 'ok', fashnRuns: 0, polls: 0, runFailOnce: false, lastFashn: null, lastReplicate: null, cancelled: [], resultPng: png(600, 900),
+    // AI Photo Makeover: stylist (Replicate vision model / Anthropic) and image editor (Replicate)
+    stylistMode: 'ok', stylistRuns: 0, stylistPolls: {}, lastStylist: null, editMode: 'ok', editRuns: 0, editPolls: {}, lastEdit: null, editModel: null,
+    anthropicMode: 'ok', anthropicCalls: 0, lastAnthropic: null, lastAnthropicHeaders: null, plan: PLAN, makeoverJpg: png(512, 768, [180, 120, 110]) }
   const server = http.createServer(async (req, res) => {
     let b = []; for await (const c of req) b.push(c); b = Buffer.concat(b).toString()
     const j = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)) }
@@ -77,6 +80,37 @@ export async function startMockProviders() {
       return j(200, { id: m[1], status: 'completed', output: ['data:image/png;base64,' + st.resultPng.toString('base64')] })
     }
     m = /^\/fashn\/v1\/cancel\/(\w+)$/.exec(req.url); if (m) { st.cancelled.push(m[1]); return j(200, { id: m[1], status: 'canceled' }) }
+    // Replicate: AI Photo Makeover stylist (OpenAI vision models) and image editors (nano-banana, FLUX Kontext)
+    let mm = /^\/replicate\/v1\/models\/(openai\/[\w.-]+)\/predictions$/.exec(req.url)
+    if (mm && req.method === 'POST') { st.lastStylist = JSON.parse(b); st.stylistModel = mm[1]; return j(201, { id: 'st' + ++st.stylistRuns, status: 'starting' }) }
+    mm = /^\/replicate\/v1\/models\/((?:google\/nano-banana[\w.-]*)|(?:black-forest-labs\/flux-kontext[\w.-]*))\/predictions$/.exec(req.url)
+    // (flux-kontext-pro stays the hairstyle mock further down)
+    if (mm && req.method === 'POST' && mm[1] !== 'black-forest-labs/flux-kontext-pro') { st.lastEdit = JSON.parse(b); st.editModel = mm[1]; return j(201, { id: 'ed' + ++st.editRuns, status: 'starting' }) }
+    mm = /^\/replicate\/v1\/predictions\/(st\d+)$/.exec(req.url)
+    if (mm) {
+      const n = (st.stylistPolls[mm[1]] = (st.stylistPolls[mm[1]] || 0) + 1)
+      if (n < 2) return j(200, { id: mm[1], status: 'processing' })
+      if (st.stylistMode === 'fail') return j(200, { id: mm[1], status: 'failed', error: 'model error' })
+      const text = st.stylistMode === 'garbage' ? 'I would suggest a lovely look!' : st.stylistMode === 'noface' ? '{"error":"no_face"}' : st.stylistMode === 'minor' ? '{"error":"minor"}' : '```json\n' + JSON.stringify(st.plan) + '\n```'
+      return j(200, { id: mm[1], status: 'succeeded', output: text.match(/.{1,7}/gs) }) // streamed tokens, as Replicate's language models return them
+    }
+    mm = /^\/replicate\/v1\/predictions\/(ed\d+)$/.exec(req.url)
+    if (mm) {
+      const n = (st.editPolls[mm[1]] = (st.editPolls[mm[1]] || 0) + 1)
+      if (n < 2) return j(200, { id: mm[1], status: 'processing' })
+      if (st.editMode === 'blocked') return j(200, { id: mm[1], status: 'failed', error: 'Prediction failed: content flagged as sensitive (E005)' })
+      return j(200, { id: mm[1], status: 'succeeded', output: `http://127.0.0.1:${server.address().port}/files/${st.editMode === 'garbage' ? 'notimage.jpg' : 'makeover.jpg'}` })
+    }
+    mm = /^\/replicate\/v1\/predictions\/(\w+)\/cancel$/.exec(req.url); if (mm && req.method === 'POST') { st.cancelled.push(mm[1]); return j(200, { id: mm[1], status: 'canceled' }) }
+    if (req.url === '/files/makeover.jpg') { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(st.makeoverJpg) }
+    if (req.url === '/files/notimage.jpg') { res.writeHead(200, { 'content-type': 'image/jpeg' }); return res.end(Buffer.from('<html>not an image</html>')) }
+    // Anthropic Messages API (optional Claude stylist)
+    if (req.url === '/anthropic/v1/messages' && req.method === 'POST') {
+      st.anthropicCalls++; st.lastAnthropic = JSON.parse(b); st.lastAnthropicHeaders = req.headers
+      if (st.anthropicMode === 'error') return j(500, { type: 'error', error: { type: 'api_error', message: 'overloaded' } })
+      if (st.anthropicMode === 'slow') { await new Promise((r) => setTimeout(r, 3000)); return j(200, { content: [{ type: 'text', text: JSON.stringify(st.plan) }] }) }
+      return j(200, { id: 'msg_1', type: 'message', role: 'assistant', content: [{ type: 'text', text: JSON.stringify(st.plan) }], stop_reason: 'end_turn' })
+    }
     // Replicate
     if (/^\/replicate\/v1\/models\/[\w.-]+\/[\w.-]+\/predictions$/.test(req.url) && req.method === 'POST') { st.lastReplicate = JSON.parse(b); st.polls = 0; return j(201, { id: 'rp1', status: 'starting' }) }
     if (req.url === '/replicate/v1/predictions/rp1') { st.polls++; return st.polls < 2 ? j(200, { status: 'processing' }) : j(200, { status: 'succeeded', output: `http://127.0.0.1:${server.address().port}/files/out.png` }) }
@@ -85,7 +119,18 @@ export async function startMockProviders() {
   })
   await new Promise((r) => server.listen(0, '127.0.0.1', r))
   const base = `http://127.0.0.1:${server.address().port}`
-  return { st, server, env: { FASHN_BASE: `${base}/fashn/v1`, REPLICATE_BASE: `${base}/replicate/v1` }, close: () => new Promise((r) => server.close(r)) }
+  return { st, server, env: { FASHN_BASE: `${base}/fashn/v1`, REPLICATE_BASE: `${base}/replicate/v1`, ANTHROPIC_BASE: `${base}/anthropic/v1` }, close: () => new Promise((r) => server.close(r)) }
+}
+
+// a stylist answer in the shape the system prompt asks for (red bridal lehenga)
+export const PLAN = {
+  outfit: { summary: 'Red silk bridal lehenga with heavy gold zari embroidery', colours: ['deep red', 'gold'], fabric: 'raw silk', details: 'gold zari and sequin work', style: 'traditional', occasion: 'bridal' },
+  skin: { tone: 'medium with warm undertone', lighting: 'warm indoor light' },
+  makeup: { foundation: 'satin warm-beige foundation matched to her medium warm skin', concealer: 'peach corrector then light concealer under the eyes', contour: 'soft warm bronze under the cheekbones and along the jaw',
+    blush: 'warm rose blush on the apples blended up', highlighter: 'gold highlighter on cheekbones, brow bone and nose tip', eyeshadow: 'gold shimmer on the lid with bronze crease and deep brown outer V',
+    eyeliner: 'defined black winged liner and black kohl in the waterline', mascara: 'volumising black mascara with soft lash extensions', brows: 'filled and defined with dark brown powder',
+    lipstick: 'deep red matte lipstick with a maroon liner', lip_finish: 'matte' },
+  hair: 'low braided bridal bun with jasmine flowers and a centre part', jewellery: 'gold kundan maang tikka, matching jhumkas and a nath', accessories: 'none', look_name: 'Classic red bride', why: 'Gold eyes echo the zari work and deep red lips match the lehenga.',
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

@@ -11,6 +11,10 @@ import { pickProvider, providerById, describe } from '../providers/index.js'
 import { STYLES, COLOURS } from '../providers/prompts.js'
 import { validateImage, validateResultBytes, fileKey } from './images.js'
 import { isGuestOwner } from '../db/models.js'
+import { replicateCancel } from '../providers/makeover.js'
+
+// uploaded photos and in-between images (deleted when a job finishes), and the generated result
+const INPUT_KINDS = ['person', 'garment', 'dressed'], ALL_KINDS = [...INPUT_KINDS, 'result']
 
 const CATEGORIES = ['auto', 'tops', 'bottoms', 'one-pieces']
 const MESSAGES = {
@@ -28,6 +32,12 @@ const MESSAGES = {
   blocked: 'The AI service declined these photos.',
   timeout: 'This try-on took too long and was stopped. Please try again.',
   cancelled: 'Cancelled.',
+  // AI Photo Makeover
+  stylist_error: 'The AI stylist could not create a makeup plan for this photo. Please try again.',
+  stylist_bad: 'The AI stylist gave an answer that could not be used. Please try again.',
+  no_face: 'The AI could not see one clear face in your photo. Please use a clear, front-facing photo of one person, in good light.',
+  minor: 'AI makeovers are only available for adults (18+).',
+  not_configured: 'AI Photo Makeover is not switched on for this website yet.',
   // reported by the browser for the free provider
   free_unreachable: 'The free AI service (Hugging Face) could not be reached. It may be starting up or busy: please try again later.',
   free_quota: 'The free AI service\'s daily limit for your connection is used up. Please try again later (it resets within 24 hours).',
@@ -43,7 +53,7 @@ export function tryonService({ TryOn, RateLimit }, storage, cfg) {
   const expired = (job) => job.expiresAt && Date.parse(job.expiresAt) < Date.now()
 
   async function dropInputs(job) {
-    for (const kind of ['person', 'garment']) if (job.inputs?.[kind]) { await files.delete(fileKey(job.owner, job.id, kind)); delete job.inputs[kind] }
+    for (const kind of INPUT_KINDS) if (job.inputs?.[kind]) { await files.delete(fileKey(job.owner, job.id, kind)); delete job.inputs[kind] }
   }
   async function fail(job, code) {
     job.status = 'failed'; job.stage = 'failed'; job.error = { code, message: messageFor(code) }; job.completedAt = new Date().toISOString()
@@ -80,7 +90,8 @@ export function tryonService({ TryOn, RateLimit }, storage, cfg) {
       const p = providerById(job.provider)
       return {
         id: job.id, type: job.type, status: job.status, stage: job.stage, options: job.options,
-        provider: describe(p, cfg), error: job.error, createdAt: job.createdAt, completedAt: job.completedAt, expiresAt: job.expiresAt,
+        provider: job.type === 'makeover' ? { id: 'makeover', label: `${job.mk?.stylistLabel || 'AI stylist'} + ${job.mk?.editorLabel || 'AI image editor'}`, mode: 'server', paid: true } : describe(p, cfg), error: job.error,
+        ...(job.type === 'makeover' ? { plan: job.plan || null, notes: [...new Set(job.mk?.notes || [])], outfitPlaced: !!job.mk?.dressed || (job.mk?.notes || []).includes('outfit_by_editor') } : {}), createdAt: job.createdAt, completedAt: job.completedAt, expiresAt: job.expiresAt,
         result: job.status === 'succeeded' && job.result ? { url: `/api/images/${job.id}/result`, mime: job.result.mime, width: job.result.width, height: job.result.height } : null,
       }
     },
@@ -170,10 +181,15 @@ export function tryonService({ TryOn, RateLimit }, storage, cfg) {
       return out
     },
 
+    // shared with the makeover service (services/makeover.js)
+    failJob: (job, code) => fail(job, code),
+    succeedJob: (job, bytes) => succeed(job, bytes),
+
     async removeJob(job) {
+      if (job.type === 'makeover' && job.status === 'processing') for (const id of [job.mk?.editId, job.mk?.stylistId].filter(Boolean)) { try { await replicateCancel(cfg, id) } catch { /* already finished */ } }
       const p = providerById(job.provider)
       if (job.status === 'processing' && job.externalId && p?.cancel) { try { await p.cancel(job.externalId, cfg) } catch { /* already finished */ } }
-      for (const kind of ['person', 'garment', 'result']) await files.delete(fileKey(job.owner, job.id, kind))
+      for (const kind of ALL_KINDS) await files.delete(fileKey(job.owner, job.id, kind))
       await TryOn.remove(job)
     },
     async remove(owner, id) {
@@ -195,7 +211,7 @@ export function tryonService({ TryOn, RateLimit }, storage, cfg) {
       for (const job of await TryOn.listForOwner(fromOwner)) {
         if (expired(job)) { await svc.removeJob(job); continue }
         const moved = { ...job, owner: toOwner, expiresAt: expiry(toOwner) }
-        for (const kind of ['person', 'garment', 'result']) {
+        for (const kind of ALL_KINDS) {
           const f = await files.getBytes(fileKey(fromOwner, job.id, kind))
           if (f) { await files.setBytes(fileKey(toOwner, job.id, kind), f.bytes, f.meta); await files.delete(fileKey(fromOwner, job.id, kind)) }
         }

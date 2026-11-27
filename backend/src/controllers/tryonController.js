@@ -31,7 +31,7 @@ export const tryonController = {
     const owner = ownerOf(ctx)
     if (!owner) return json(200, { items: [], guest: true })
     const u = new URL(ctx.req.url), type = u.searchParams.get('type')
-    const jobs = await ctx.services.tryon.history(owner, { limit: Number(u.searchParams.get('limit')) || 30, type: type === 'outfit' || type === 'hair' ? type : undefined })
+    const jobs = await ctx.services.tryon.history(owner, { limit: Number(u.searchParams.get('limit')) || 30, type: ['outfit', 'hair', 'makeover'].includes(type) ? type : undefined })
     return json(200, { items: jobs.map((j) => view(ctx, j)), guest: !ctx.user, guestHours: ctx.user ? undefined : ctx.cfg.retention.guestHours })
   },
   async remove(ctx) { await ctx.services.tryon.remove(mustOwner(ctx), ctx.params.id); return json(200, { ok: true }) },

@@ -6,6 +6,7 @@ import { createStorage } from './db/storage.js'
 import { models as makeModels } from './db/models.js'
 import { authService } from './services/auth.js'
 import { tryonService } from './services/tryon.js'
+import { makeoverService } from './services/makeover.js'
 import { match } from './routes.js'
 import { ApiError, json, clientIp } from './http.js'
 import { corsHeaders, preflight, checkCsrf, rateLimit } from './middleware/security.js'
@@ -16,6 +17,7 @@ export async function createApp(options = {}) {
   const storage = options.storage || (await createStorage(cfg))
   const models = makeModels(storage)
   const services = { auth: authService(models, cfg), tryon: tryonService(models, storage, cfg) }
+  services.makeover = makeoverService(models, storage, cfg, services.tryon)
   const log = options.logger || console
 
   async function handle(req) {

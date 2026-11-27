@@ -1,0 +1,53 @@
+/* AI Photo Makeover: builds on the "See It On You" styles (aitryon.css); only what is new is here */
+.mk .at-card h3 small{font-family:Figtree,system-ui,sans-serif;font-size:13px;color:#D3CABD;letter-spacing:.04em}
+.mk-tabs{display:flex;gap:6px;padding:4px;border-radius:999px;background:rgba(6,8,12,.6);border:1px solid rgba(255,255,255,.12)}
+.mk-tabs button{flex:1;min-height:40px;border-radius:999px;border:0;background:transparent;color:#D3CABD;cursor:pointer;font-size:14px}
+.mk-tabs button.on{background:#E2BE7C;color:#0B0E14;font-weight:600}
+.mk-pane{display:grid;gap:10px}
+.mk-pane[hidden]{display:none}
+.mk-lab{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#D3CABD}
+.mk textarea{width:100%;min-height:96px;resize:vertical;border-radius:14px;border:1px solid rgba(255,255,255,.25);background:#11151d;color:#F7F1E8;font:inherit;font-size:16px;line-height:1.5;padding:12px 14px}
+.mk textarea:focus{border-color:#E2BE7C;outline:none}
+.mk-ex,.mk-occ{display:flex;flex-wrap:wrap;gap:8px}
+.mk-ex button,.mk-occ button{min-height:38px;padding:7px 14px;border-radius:999px;border:1px solid rgba(226,190,124,.45);background:transparent;color:#F7F1E8;cursor:pointer;font-size:13.5px;transition:background .2s,color .2s}
+.mk-ex button:hover,.mk-occ button:hover{border-color:#E2BE7C}
+.mk-occ button.on{background:#E2BE7C;color:#0B0E14;border-color:#E2BE7C;font-weight:600}
+.mk-have{margin:0;font-size:13px;color:#9fd8b0;min-height:1.2em}
+.mk-outfit .at-drop{aspect-ratio:4/5;max-height:46vh}
+.mk-outfit.has{border-color:rgba(226,190,124,.75)}
+.mk-prefs{gap:14px}
+.mk-opts{display:flex;flex-wrap:wrap;gap:10px 22px;font-size:15px}
+.mk-opts label{display:flex;gap:10px;align-items:center;cursor:pointer}
+.mk-opts input{width:20px;height:20px;accent-color:#E2BE7C}
+.mk-form{display:grid;gap:20px}
+.mk-steps{margin:8px 0 0;padding:0;list-style:none;display:grid;gap:6px;font-size:14px;color:#8f8a82}
+.mk-steps li{display:flex;gap:10px;align-items:center}
+.mk-steps li::before{content:'';width:10px;height:10px;border-radius:50%;border:1.5px solid currentColor;flex:none}
+.mk-steps li.done{color:#9fd8b0}.mk-steps li.done::before{background:currentColor}
+.mk-steps li.now{color:#F7F1E8}.mk-steps li.now::before{background:#E2BE7C;border-color:#E2BE7C;animation:mkPulse 1.1s ease-in-out infinite}
+@keyframes mkPulse{50%{opacity:.35}}
+.mk-look{margin:0;max-width:760px;text-align:center;color:#D3CABD;line-height:1.55}
+.mk-look b{color:#E2BE7C;font-weight:600}
+.mk-res-grid{width:100%;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
+.mk-res-grid .at-cmp{width:100%}
+.mk-pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mk-pair figure{margin:0;display:grid;gap:6px}
+.mk-pair img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:14px;border:1px solid rgba(226,190,124,.4);background:#06080c}
+.mk-pair figcaption{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#D3CABD;text-align:center}
+.mk-notes{width:100%;display:grid;gap:8px}
+.mk-notes p{margin:0;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.5;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14)}
+.mk-notes p.warn{background:rgba(226,190,124,.1);border-color:rgba(226,190,124,.5)}
+.mk-plan{width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.mk-plan section{border-radius:18px;padding:16px;background:rgba(255,255,255,.04);border:1px solid rgba(226,190,124,.3);display:grid;gap:8px;align-content:start}
+.mk-plan h4{margin:0;font-family:Italiana,Georgia,serif;font-weight:400;font-size:22px;color:#E2BE7C}
+.mk-plan p{margin:0;font-size:14px;line-height:1.55}
+.mk-plan .mk-sub{color:#D3CABD;font-size:13px}
+.mk-plan i{color:#D3CABD}
+.mk-chips{display:flex;flex-wrap:wrap;gap:6px}
+.mk-chips span{padding:3px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);font-size:12.5px}
+.mk-plan dl{margin:0;display:grid;gap:8px}
+.mk-plan dt{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#E2BE7C}
+.mk-plan dd{margin:1px 0 0;font-size:14px;line-height:1.45}
+.mk .at-actions{width:100%}
+@media (max-width:900px){ .mk-plan{grid-template-columns:1fr} .mk-res-grid{grid-template-columns:1fr} }
+@media (max-width:760px){ .mk-tabs button{font-size:13px} .mk-pair{display:none} }
