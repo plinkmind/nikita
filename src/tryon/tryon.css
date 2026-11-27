@@ -171,3 +171,6 @@ body.studio-open{overflow:hidden}
 a.chip{text-decoration:none;color:inherit}
 .ts-photo select{min-height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.25);background:#11151d;color:#F7F1E8;font:inherit;font-size:15px;padding:0 10px;width:100%}
 .ts-edit[hidden],.ts-photo[hidden]{display:none}
+/* Update 17: privacy line under the studio title */
+.ts-priv{margin:3px 0 0;font-size:12px;line-height:1.35;color:#D3CABD;opacity:.85}
+@media (max-height:520px){.ts-priv{display:none}}

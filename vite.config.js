@@ -19,8 +19,19 @@ function glamifyApi() {
   return { name: 'glamify-api', configureServer: (s) => mount(s, s.config.mode), configurePreviewServer: (s) => mount(s, s.config.mode) }
 }
 
+// Link previews need the full site address. Netlify sets URL during every build (your custom domain once you add one);
+// elsewhere set SITE_URL in .env, e.g. SITE_URL=https://www.example.com
+function siteUrl() {
+  let url = ''
+  return {
+    name: 'glamify-site-url',
+    configResolved(c) { const env = { ...loadEnv(c.mode, process.cwd(), ''), ...process.env }; url = (env.SITE_URL || env.URL || '').replace(/\/+$/, '') },
+    transformIndexHtml: (html) => html.replaceAll('%SITE_URL%', url),
+  }
+}
+
 export default {
-  plugins: [glamifyApi()],
+  plugins: [glamifyApi(), siteUrl()],
   server: { host: true }, // lets you open the dev site from your phone on the same Wi-Fi
   preview: { host: true },
   build: {

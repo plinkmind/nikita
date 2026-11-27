@@ -1,7 +1,16 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
+// fonts are served from this site (no Google Fonts request: faster first paint, no third-party call)
+import '@fontsource/figtree/latin-400.css'
+import '@fontsource/figtree/latin-500.css'
+import '@fontsource/figtree/latin-600.css'
+import '@fontsource/figtree/latin-700.css'
+import '@fontsource/italiana/latin-400.css'
+import '@fontsource/pinyon-script/latin-400.css'
 import './style.css'
-import { initStudio } from './tryon/studio.js'
+
+// Where demo requests go when Netlify Forms is not available (local computer, other hosts). CHANGE THIS to your real address.
+const DEMO_EMAIL = 'hello@plinkmind.world'
 
 const R = 0.5625 // mirror width / height (portrait videos)
 const GAP = 14   // distance between chapters
@@ -12,10 +21,10 @@ const ACCENTS = [
 // Edit the story here. crop = how a landscape video is cropped into the portrait mirror.
 const CH = [
   { k: 'Glamify XR smart mirror', h: 'The future of luxury, reflected.', p: 'Clients try on makeup, couture and fine jewelry in real time, right inside your boutique.', bg: 'hero-earring', color: '#1c1118' },
-  { k: '01 · Beauty and makeup', h: 'Flawless color, on her.', p: 'Hyper-realistic virtual makeup try-ons. Our AR technology matches colors exactly, from foundation to lipstick to eyeshadow.', video: 'beauty-tryon', prop: 'lipstick', color: '#3b1624' },
-  { k: '02 · Fashion and apparel', h: 'An endless wardrobe.', p: 'See high-end garments with physics-based fabric drape. Clients explore a digital wardrobe without leaving the fitting area.', video: 'fashion-gown', prop: 'cloth', color: '#14203a' },
-  { k: '03 · Jewelry and luxury', h: 'Every facet, alive.', p: 'Fine jewelry and watches with stunning clarity. Precision ray-tracing captures the sparkle of every diamond.', video: 'bridal-ring', prop: 'gem', color: '#2c2210' },
-  { k: 'Technology', h: '<5ms. No perceptible lag.', p: 'Ultra-low latency, physics-based fabric drape, precision ray-tracing and volumetric facial tracking, together in one mirror.', prop: 'rings', color: '#0d2a2a' },
+  { k: '01 · Beauty and makeup', h: 'Flawless color, on her.', p: 'Lifelike virtual makeup, live in the mirror. True-to-shade lipstick, eyeshadow, blush and foundation that stay in place as she moves.', video: 'beauty-tryon', prop: 'lipstick', color: '#3b1624' },
+  { k: '02 · Fashion and apparel', h: 'An endless wardrobe.', p: 'Garments follow her shoulders, arms and turns in the live mirror, and a realistic AI photo shows how they look on her. A digital wardrobe, right in the fitting area.', video: 'fashion-gown', prop: 'cloth', color: '#14203a' },
+  { k: '03 · Jewelry and luxury', h: 'Every facet, alive.', p: 'Earrings and necklaces in 3D, with sparkle that reacts to the light in the room and follows every turn of her head.', video: 'bridal-ring', prop: 'gem', color: '#2c2210' },
+  { k: 'Technology', h: 'Live. Private. No app.', p: 'Face, hand, hair and body tracking run in real time on the device, so the camera picture never leaves it. Nothing to install: it opens in the browser.', prop: 'rings', color: '#0d2a2a' },
   { k: 'Your turn', h: 'Design your look.', p: 'Choose a metal and shade, then book a live demo for your boutique.', video: 'boutique-mirror', color: '#2a1420', finale: true },
 ]
 const N = CH.length
@@ -112,7 +121,13 @@ scene.add(new THREE.Points(dustGeo, dustMat))
 const FINALE = `
   <div class="sw" id="sw">${ACCENTS.map((a, i) => `<button type="button" data-c="${a.c}" style="background:${a.c}" class="${i ? '' : 'on'}" aria-label="${a.n}" title="${a.n}"></button>`).join('')}</div>
   <div class="ctas"><button type="button" class="tryon-cta" data-tryon>Try it on live</button><button type="button" class="tryon-cta ai" data-aitryon>See it on you (AI photo)</button></div>
-  <form id="demoForm"><input type="email" placeholder="Your work email" required><button type="submit">Request a demo</button></form>`
+  <form id="demoForm" novalidate>
+    <input type="email" name="email" placeholder="Your work email" autocomplete="email" required aria-label="Your work email">
+    <input type="text" name="boutique" placeholder="Boutique or brand (optional)" autocomplete="organization" maxlength="120" aria-label="Boutique or brand">
+    <input type="text" name="company-website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <button type="submit">Request a demo</button>
+    <p class="demo-msg" role="status" aria-live="polite"></p>
+  </form>`
 CH.forEach((c, i) => {
   const s = document.createElement('section')
   s.className = 'ch ' + (items[i].side === 1 ? 'l' : 'r') + (c.finale ? ' fin' : '')
@@ -130,11 +145,26 @@ $('#sw').addEventListener('click', (e) => {
   document.querySelectorAll('#sw button').forEach((x) => x.classList.toggle('on', x === b))
   ;[frameMat, propMat, clothMat, dustMat].forEach((m) => m.color.set(b.dataset.c))
 })
-$('#demoForm').addEventListener('submit', (e) => {
+// Demo requests: sent to Netlify Forms (Netlify > Forms, with e-mail alerts). Where that is not available (your own
+// computer, another host) the visitor's e-mail app opens instead, pre-filled, so no request is lost.
+$('#demoForm').addEventListener('submit', async (e) => {
   e.preventDefault()
-  const email = e.target.querySelector('input').value
-  // CHANGE THIS to your real email
-  location.href = `mailto:hello@plinkmind.world?subject=${encodeURIComponent('Glamify XR demo request')}&body=${encodeURIComponent('Please contact me: ' + email)}`
+  const f = e.currentTarget, msg = f.querySelector('.demo-msg'), btn = f.querySelector('button')
+  const email = f.email.value.trim(), boutique = f.boutique.value.trim()
+  const say = (t, err = false) => { msg.textContent = t; msg.classList.toggle('err', err) }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { say('Please enter a valid e-mail address.', true); f.email.focus(); return }
+  if (f['company-website'].value) return // filled in by a bot
+  btn.disabled = true; say('Sending...')
+  const mail = () => {
+    location.href = `mailto:${DEMO_EMAIL}?subject=${encodeURIComponent('Glamify XR demo request')}&body=${encodeURIComponent(`Please contact me about a Glamify XR demo.\n\nE-mail: ${email}\nBoutique / brand: ${boutique || '-'}`)}`
+    say('Your e-mail app should open with the request ready to send.'); btn.disabled = false
+  }
+  try {
+    const r = await fetch('/', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ 'form-name': 'demo', email, boutique }).toString() })
+    // Netlify answers a form post with 200 and "server: Netlify"; anything else (404/405 on other servers) means no Netlify Forms here
+    if (!r.ok || !/netlify/i.test(r.headers.get('server') || '')) return mail()
+    f.classList.add('sent'); say(`Thank you! We will be in touch at ${email} soon.`)
+  } catch { mail() }
 })
 
 /* ---------- scroll + animation ---------- */
@@ -147,7 +177,13 @@ const maxScroll = () => maxS
 let target = 0, cur = 0, mx = 0, my = 0
 addEventListener('scroll', () => { target = Math.min(1, Math.max(0, scrollY / maxS)) }, { passive: true })
 if (!touch && !reduceMotion.matches) addEventListener('mousemove', (e) => { mx = e.clientX / innerWidth - 0.5; my = e.clientY / innerHeight - 0.5 }, { passive: true })
-$('#toEnd').onclick = (e) => { e.preventDefault(); scrollTo({ top: maxScroll(), behavior: 'smooth' }) }
+$('#toEnd').onclick = (e) => { e.preventDefault(); scrollTo({ top: maxScroll(), behavior: 'smooth' }); focusFormWhenShown() }
+// put the cursor in the e-mail field once the finale has faded in (a hidden field cannot take focus)
+function focusFormWhenShown(tries = 0) {
+  const i = $('#demoForm input'), fin = $('.ch.fin')
+  if (i && getComputedStyle(fin).visibility === 'visible' && +fin.style.opacity > 0.6) i.focus({ preventScroll: true })
+  else if (tries < 80) setTimeout(() => focusFormWhenShown(tries + 1), 150)
+}
 $('#top').onclick = (e) => { e.preventDefault(); scrollTo({ top: 0, behavior: 'smooth' }) }
 
 let lastW = 0, lastH = 0
@@ -167,8 +203,10 @@ function resize(force) {
   const scale = m ? (w >= 600 ? 0.9 : 0.8) : short ? 0.85 : 1 // phone 0.8, tablet 0.9, sideways phone 0.85, laptop/desktop 1
   items.forEach((it) => {
     it.stage.position.x = m ? 0 : it.side * 2.6
-    it.stage.position.y = m ? 1.3 : 0
-    it.stage.scale.setScalar(scale)
+    // the finale has the most text (swatches, buttons, form), so on phones its mirror sits higher and a little smaller
+    const fin = m && it.ch.finale
+    it.stage.position.y = m ? (fin ? (h < 780 ? 2.45 : 2.05) : 1.3) : 0
+    it.stage.scale.setScalar(fin ? scale * (h < 780 ? 0.66 : 0.78) : scale)
   })
 }
 let resizeTimer = 0
@@ -302,14 +340,19 @@ const shards = []
 })()
 
 // loading: a gold line draws around the logo
+// First visit: the full 3.2 s intro. Coming back: a short one (the visitor has seen it, and the files are cached).
+let seen = false
+try { seen = localStorage.getItem('gm_intro_seen') === '1'; localStorage.setItem('gm_intro_seen', '1') } catch { /* private mode */ }
+const INTRO_MS = seen || reduceMotion.matches ? 900 : 3200
 const ring = $('#ring'), pct = $('#pct'), t0 = performance.now()
 ;(function load(now) {
-  const p = Math.min(1, (now - t0) / 3200)
+  const p = Math.min(1, (now - t0) / INTRO_MS)
   ring.style.strokeDashoffset = 1 - p
   pct.textContent = Math.round(p * 100) + '%'
   if (p < 1) return requestAnimationFrame(load)
   pct.textContent = 'ready'
   $('#enter').hidden = false
+  $('#enter').focus({ preventScroll: true }) // keyboard users can press Enter / Space straight away
 })(t0)
 
 $('#enter').onclick = (e) => {
@@ -340,12 +383,21 @@ function shatter() {
 }
 
 /* ---------- virtual try-on studio ---------- */
-const studio = initStudio({
+// The studio code is not part of the first download: it is fetched in the background once the visitor is in
+// (so it is usually ready before they tap), or on the first tap at the latest.
+let studioP = null
+const loadStudio = () => (studioP ||= import('./tryon/studio.js').then((m) => m.initStudio({
   // the 3D scene sleeps while the studio covers it, so the camera and face tracking get all of the phone's power
   onOpen: () => { stopLoop(); pauseVideos() },
   onClose: () => { if (!document.hidden) startLoop() },
-})
-document.querySelectorAll('[data-tryon]').forEach((b) => b.addEventListener('click', () => studio.open()))
+})).catch((e) => { studioP = null; throw e }))
+const openStudio = (e) => {
+  const b = e.currentTarget; b.setAttribute('aria-busy', 'true')
+  loadStudio().then((s) => s.open()).catch(() => alert('The try-on studio could not load. Please check your connection and try again.')).finally(() => b.removeAttribute('aria-busy'))
+}
+document.querySelectorAll('[data-tryon]').forEach((b) => b.addEventListener('click', openStudio))
+const idle = (fn, ms) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: ms }) : setTimeout(fn, ms))
+addEventListener('load', () => idle(() => loadStudio().catch(() => {}), 4000))
 
 /* ---------- "See It On You": AI photo outfit try-on (separate from the live camera studio, loaded only when opened) ---------- */
 let aiP = null

@@ -174,3 +174,64 @@ h1,h2{font-family:Italiana,"Didot",Georgia,serif;font-weight:400;line-height:1.0
 .demo.acct.in{border-color:var(--brass)}
 @media (max-width:1100px){.demo.acct .acct-t{display:none}.demo.acct{padding-left:11px;padding-right:11px}}
 @media (max-width:520px){.hactions{gap:6px}.hactions .demo[href]{display:none}}
+
+/* ===================== Update 17 ===================== */
+
+/* short screens (phones held sideways, small laptop windows): the loader used to push "Enter" off the bottom */
+@media (max-height:560px){
+  .l-logo{width:72px;height:120px;margin-bottom:4px}
+  .l-name{font-size:clamp(44px,15vh,84px)}
+  #pct{margin-top:10px}
+  #enter{margin-top:8px;padding:10px 40px}
+}
+
+/* phones held sideways: the finale (swatches, buttons, form) did not fit under the header */
+@media (max-height:520px) and (min-aspect-ratio:5/4){
+  .ch.fin{justify-content:flex-start;padding-top:calc(54px + env(safe-area-inset-top))}
+  .ch.fin .box{width:min(440px,52%)}
+  .ch.fin .k{display:none}
+  .ch.fin .t{display:none}
+  .ch.fin h2{margin-bottom:6px}
+  .ch.fin .ctas{flex-wrap:nowrap;gap:6px}
+  .ch.fin .tryon-cta{font-size:12.5px;padding:6px 12px;min-height:36px;white-space:nowrap;margin-bottom:6px}
+  #demoForm{gap:6px}
+  #demoForm input{flex:1 1 40%;min-width:0;min-height:36px}
+  #demoForm button{flex:1 1 100%;min-height:36px}
+  .demo-msg{font-size:12.5px;margin-top:4px}
+}
+
+/* "Request a demo" stays reachable on phones (it used to be hidden below 520px): short label, logo shows the mark only */
+.demo .short{display:none}
+@media (max-width:520px){
+  .hactions .demo[href]{display:inline-flex}
+  #toEnd .long{display:none}
+  #toEnd .short{display:inline}
+}
+@media (max-width:420px){
+  #toEnd{display:inline-flex}
+  .logo .full{display:none}
+  .logo .mark{display:block;height:30px;border-radius:50%}
+}
+.logo .mark{display:none}
+@media (max-width:340px){ .demo.ai small{display:none} }
+
+/* demo request form: second field + on-page confirmation */
+.demo-msg{flex:1 1 100%;margin:6px 0 0;font-size:14px;color:var(--brass);min-height:1.2em}
+.demo-msg.err{color:#f2a3a3}
+#demoForm .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+#demoForm.sent input,#demoForm.sent button{display:none}
+/* small phones held sideways (iPhone SE, 667x375): keep the header on one row */
+@media (max-height:520px) and (min-aspect-ratio:5/4) and (max-width:760px){
+  .logo .prod{display:none}
+  #toEnd .long{display:none}
+  #toEnd .short{display:inline}
+}
+/* upright phones: the finale form has two fields now, so the short instruction line gives way (keeps text off the mirror) */
+@media (max-width:599px) and (max-aspect-ratio:5/4){
+  .ch.fin .t{display:none}
+  .ch.fin .k{margin-bottom:6px}
+  .ch.fin h2{margin-bottom:10px}
+  .ch.fin .sw{margin-bottom:10px}
+  .ch.fin .tryon-cta{margin-bottom:8px}
+  #demoForm{gap:8px}
+}

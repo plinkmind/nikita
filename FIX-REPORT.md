@@ -1,3 +1,44 @@
+# Update 17: website improvements (layout, demo requests, copy, speed, link previews)
+Website only: tracking, try-on and backend behave as before (backend suite 55/55).
+
+**Layout**
+- Phones held sideways: the loader's **Enter** button and the finale (buttons, form) were cut off. Both now fit (checked at 844x390 and 667x375).
+- "Request a demo" is visible on every phone (short label "Demo"; on phones under 420px wide the logo shows the round mark).
+- Upright phones: the finale mirror sits higher and smaller so the text no longer covers it.
+
+**Demo requests (`src/main.js`, `index.html`)**
+- New field: boutique or brand (optional), a hidden anti-spam field, and an on-page "Thank you" message.
+- On Netlify, requests go to **Netlify Forms** (Netlify > your site > Forms). Turn on e-mail alerts there:
+  Site configuration > Forms > Form notifications > Add notification > Email notification.
+  If Forms says "not enabled", click **Enable form detection** once, then redeploy.
+- Anywhere else (your computer, another host), the visitor's e-mail app opens with the request filled in.
+  The fallback address is `DEMO_EMAIL` at the top of `src/main.js`. CHANGE IT to your real address.
+
+**Copy**: claims the product cannot back up were replaced ("<5ms", "physics-based fabric drape", "precision ray-tracing").
+The new text describes what the mirror does (live tracking on the device, AI photo for realistic outfits, 3D jewellery).
+Edit it in the `CH` list at the top of `src/main.js`.
+
+**Speed**
+- Fonts are served from the site itself (@fontsource packages): no Google Fonts request, no layout jump.
+- The try-on studio code is no longer in the first download (main script 73 kB -> 8 kB gzipped). It loads in the background
+  after the page has loaded, so it is normally ready before the visitor taps "Try It On".
+- Hero video has a poster image, so the first screen shows instantly.
+- Loader: the full 3.2 s intro on the first visit, 0.9 s on return visits. The Enter button gets keyboard focus.
+
+**Link previews and search**: Open Graph / Twitter tags and `public/og-image.jpg` (1200x630). The full address is filled in at
+build time from Netlify's `URL` (or `SITE_URL` in `.env`). A `<noscript>` text block for visitors and crawlers without JavaScript.
+
+**Trust**: the studio header says "Your camera picture stays on this device. Nothing is recorded or sent."
+
+**Still to do (needs your decision or content)**
+- The hero video (`public/videos/hero-earring.mp4`) shows garbled AI-generated menu text on its right side ("Preforance",
+  "Abverative", "Visual indexrp"), visible on wide screens. Re-export or crop the video.
+- Free AI try-on (IDM-VTON) has a non-commercial licence but is on by default; README section on models says it is not used.
+  Decide, then set `VITE_FREE_TRYON=off` in Netlify environment variables if needed.
+- Privacy policy / terms pages (face photos and accounts), customer logos or results, analytics.
+
+---
+
 # Update 16: body tracking and outfit try-on (Step 7)
 Garment photos on busy backgrounds are now cut out (colour models + graph cut, merged with the plain-background method); the live
 outfit is bent onto the body (torso follows shoulders, waist, hips and body turn; sleeves follow the arms), keeps the garment's

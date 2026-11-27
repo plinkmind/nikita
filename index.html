@@ -10,17 +10,25 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <title>Glamify XR | The future of luxury, reflected</title>
   <meta name="description" content="Glamify XR is a smart mirror for luxury retail: virtual try-ons for makeup, fashion and fine jewelry.">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Italiana&family=Pinyon+Script&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- link previews (WhatsApp, LinkedIn, Slack, X...). the site address is filled in at build time (see vite.config.js). -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Plinkmind">
+  <meta property="og:title" content="Glamify XR | The future of luxury, reflected">
+  <meta property="og:description" content="A smart mirror for luxury retail: clients try on makeup, outfits and fine jewellery live, right inside your boutique.">
+  <meta property="og:image" content="%SITE_URL%/og-image.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:url" content="%SITE_URL%/">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preload" as="image" href="/videos/hero-poster.jpg">
 </head>
 <body>
   <div id="probe" aria-hidden="true"></div>
-  <video id="heroBg" src="/videos/hero-earring.mp4" muted loop playsinline preload="auto" aria-hidden="true" tabindex="-1"></video>
+  <video id="heroBg" src="/videos/hero-earring.mp4" poster="/videos/hero-poster.jpg" muted loop playsinline preload="auto" aria-hidden="true" tabindex="-1"></video>
   <div class="heroShade"></div>
   <canvas id="gl" aria-hidden="true"></canvas>
   <div class="vignette"></div>
-  <header><a class="logo" href="#" id="top" aria-label="Plinkmind, Glamify XR"><img src="/pm-logo.png" alt="Plinkmind"><span class="prod">Glamify XR</span></a><div class="hactions"><button class="demo" type="button" data-tryon>Try It On</button><button class="demo ai" type="button" data-aitryon>See It On You <small>AI</small></button><button class="demo acct" type="button" data-account aria-label="Your account"><span class="acct-ic" aria-hidden="true"></span><span class="acct-t">Sign in</span></button><a class="demo" href="#" id="toEnd">Request a demo</a></div></header>
+  <header><a class="logo" href="#" id="top" aria-label="Plinkmind, Glamify XR"><img class="full" src="/pm-logo.png" alt="Plinkmind"><img class="mark" src="/pm-mark.png" alt="Plinkmind"><span class="prod">Glamify XR</span></a><div class="hactions"><button class="demo" type="button" data-tryon>Try It On</button><button class="demo ai" type="button" data-aitryon>See It On You <small>AI</small></button><button class="demo acct" type="button" data-account aria-label="Your account"><span class="acct-ic" aria-hidden="true"></span><span class="acct-t">Sign in</span></button><a class="demo" href="#demo" id="toEnd"><span class="long">Request a demo</span><span class="short">Demo</span></a></div></header>
   <main id="chs"></main>
   <nav id="dots" aria-label="Chapters"></nav>
   <div id="hint">Scroll<i></i></div>
@@ -38,6 +46,18 @@
     </div>
   </div>
   <div id="spacer"></div>
+  <noscript>
+    <div style="position:relative;z-index:200;max-width:640px;margin:0 auto;padding:120px 24px;background:#0D1118">
+      <h1>Glamify XR: the future of luxury, reflected</h1>
+      <p>A smart mirror for luxury retail. Clients try on makeup, hair colour, nails, outfits and fine jewellery live in the mirror, or as a realistic AI photo, right inside your boutique.</p>
+      <p>This site needs JavaScript for its 3D tour and live try-on. To book a demo, e-mail <a href="mailto:hello@plinkmind.world" style="color:#E2BE7C">hello@plinkmind.world</a>.</p>
+    </div>
+  </noscript>
+  <!-- Netlify Forms reads this hidden copy at deploy time, so demo requests appear in Netlify > Forms (with e-mail alerts).
+       The visible form is built by src/main.js; keep the field names the same in both. -->
+  <form name="demo" data-netlify="true" netlify-honeypot="company-website" hidden>
+    <input type="email" name="email"><input type="text" name="boutique"><input type="text" name="company-website">
+  </form>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

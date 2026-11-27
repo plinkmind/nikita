@@ -3,6 +3,8 @@
 One website, one codebase. The same page adapts to phones, tablets, laptops and desktops.
 Built with Vite, Three.js and MediaPipe Face Landmarker, plus a backend (accounts, AI try-on, history) in `backend/`.
 
+> **New in Update 17 (website improvements, demo form on Netlify Forms):** see the top of `FIX-REPORT.md`.
+>
 > **Start here for the current version: section O (backend).** Sections I and K describe an older separate AI server
 > (`server/`) that has been **replaced** by the new backend.
 

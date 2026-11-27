@@ -1,7 +1,7 @@
 {
   "name": "glamify-xr",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.3.0",
   "type": "module",
   "scripts": {
     "predev": "node scripts/copy-wasm.mjs",
@@ -18,6 +18,9 @@
     "test:outfit": "node tests/run.mjs test=outfit && node tests/run.mjs test=garment && node tests/run.mjs test=outfitgeo"
   },
   "dependencies": {
+    "@fontsource/figtree": "^5.3.0",
+    "@fontsource/italiana": "^5.3.0",
+    "@fontsource/pinyon-script": "^5.3.0",
     "@gradio/client": "^1.19.1",
     "@mediapipe/tasks-vision": "0.10.17",
     "@netlify/blobs": "^11.1.7",

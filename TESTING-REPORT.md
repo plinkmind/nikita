@@ -1,5 +1,17 @@
 # Testing report
 
+## Update 17: website improvements
+
+| Test | Result |
+|---|---|
+| Built site in Chromium at 360x740, 390x844, 820x1180, 1440x900, 844x390, 667x375 | header on one row, Enter button and whole finale (title, swatches, buttons, form) on screen at every size, no site errors |
+| Demo form: bad e-mail / local server / simulated Netlify reply | error message / e-mail app fallback / form-name=demo&email=...&boutique=... posted, thank-you shown |
+| "Try It On" with the studio loaded on demand (fake camera) | studio opens, camera starts, privacy line shown |
+| Return visit | loader ready after ~0.9 s (first visit ~3.2 s) |
+| Fonts | Figtree, Italiana, Pinyon Script load from the site; no request to fonts.googleapis.com |
+| Backend suite | 55/55 |
+| Not tested | a real Netlify deploy of the form (needs your Netlify account), real phones |
+
 ## Update 16: body tracking and outfit try-on
 
 | Test | Result |

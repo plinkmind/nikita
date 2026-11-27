@@ -20,7 +20,7 @@ import { getLooks, saveLook, deleteLook, getFavs, isFav, toggleFav } from './loo
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
 const TEMPLATE = `
-<div class="ts-head"><div><span class="ts-k">Glamify XR</span><h2>Virtual Try-On Studio</h2></div><button class="ts-x" data-a="close" aria-label="Close studio">&times;</button></div>
+<div class="ts-head"><div><span class="ts-k">Glamify XR</span><h2>Virtual Try-On Studio</h2><p class="ts-priv">Your camera picture stays on this device. Nothing is recorded or sent.</p></div><button class="ts-x" data-a="close" aria-label="Close studio">&times;</button></div>
 <div class="ts-body">
   <section class="ts-stage">
     <div class="ts-view">
